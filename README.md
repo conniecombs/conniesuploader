@@ -1,3 +1,45 @@
+The primary update in version 0.9.7 is the addition of a major new feature: **support for creating galleries on pixhost.to**.
+
+---
+
+## 🚀 New Features
+
+### Pixhost.to Gallery Support
+* **Create Gallery GUI:** A new "Gallery Options" section was added to the **pixhost.to** tab. This includes:
+    * A "Create Gallery" checkbox.
+    * A "Gallery Name" text field that appears when the checkbox is ticked.
+    * A new tooltip for the "Create Gallery" checkbox.
+* **Gallery Creation Logic:** When an upload to Pixhost.to is started with "Create Gallery" checked:
+    1.  The application first makes an API request to `api.pixhost.to/galleries` to create the new gallery.
+    2.  It retrieves a `gallery_hash`, `gallery_upload_hash`, and `gallery_url`.
+    3.  All subsequent image uploads in the batch are associated with this gallery.
+* **Gallery Finalization:** After all uploads in the batch are successfully completed, the app sends a "finalize" request to the gallery API to make the gallery public. If any uploads fail, the gallery is not finalized.
+* **Output File:** The generated `upload_results.txt` file now includes the **Gallery URL** at the very top if a gallery was successfully created.
+
+---
+
+## ⚙️ Changes & Improvements
+
+### Application & GUI
+* **Window Title:** The main application window title has been updated from "Connie's Uploader 0.9.6" to "**Connie's Uploader 0.9.7**".
+* **Context Menu:** The new "Gallery Name" entry field now has a right-click context menu (Cut, Copy, Paste), just like the `imx.to` API key field.
+
+### Settings
+* **Settings File:** The state of the "Create Gallery" checkbox is now saved to and loaded from the `settings.json` file.
+
+### Backend & Class Logic
+* **Constants:** A new constant, `PIX_GALLERIES_URL`, was added to support the new API endpoint.
+* **`PixhostUploader` Class:**
+    * The constructor (`__init__`) now accepts optional `gallery_hash` and `gallery_upload_hash` arguments.
+    * `get_request_params` was modified to add the `gallery_hash` and `gallery_upload_hash` to the upload request fields if they are provided.
+* **`ImageUploader` Class:**
+    * Internal state variables (`self.gallery_hash`, `self.gallery_upload_hash`, `self.gallery_url`) were added to manage gallery creation.
+    * A new method, `toggle_gallery_entry`, was added to show/hide the gallery name field.
+    * `start_upload` was updated to handle the initial gallery creation API call and to pass the new gallery hashes to the worker threads.
+    * `upload_worker` and `retry_upload` were updated to accept and pass the gallery hashes to the `PixhostUploader` instance.
+    * `check_threads` was updated to call the gallery "finalize" API endpoint upon successful completion of all uploads.
+
+
 Here is a full GitHub README.md file for your Python program.
 
 -----
