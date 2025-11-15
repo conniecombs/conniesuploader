@@ -6,6 +6,10 @@ Welcome to the first major release of Connie's Uploader! This is a cross-platfor
 
 This release focuses on core functionality, secure credential handling, and essential features for efficient image uploading. The app is designed for users who need to upload multiple images quickly, with options for thumbnails, galleries, and retry mechanisms for failed uploads.
 
+[![https://image.imx.to/u/t/2025/11/15/6g142d.jpg](https://image.imx.to/u/t/2025/11/15/6g142d.jpg)](https://imx.to/i/6g142d)
+[![https://image.imx.to/u/t/2025/11/15/6g142e.jpg](https://image.imx.to/u/t/2025/11/15/6g142e.jpg)](https://imx.to/i/6g142e)
+[![https://image.imx.to/u/t/2025/11/15/6g142a.jpg](https://image.imx.to/u/t/2025/11/15/6g142a.jpg)](https://imx.to/i/6g142a)
+
 ## Key Features
 - **Multi-Service Support**: Upload to imx.to (via API key) or pixhost.to with customizable options like content type (Safe/Adult) and thumbnail sizes.
 - **Batch Uploads**: Add individual files or entire folders, with support for JPG, JPEG, PNG, GIF, BMP, and WEBP formats. Handles large batches (with warnings for >1000 files).
