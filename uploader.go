@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/disintegration/imaging"
 	"image"
 	"image/jpeg"
 	_ "image/png"
@@ -190,24 +191,13 @@ func handleGenerateThumb(job JobRequest) {
 		return
 	}
 
-	bounds := img.Bounds()
-	ratio := float64(bounds.Dx()) / float64(bounds.Dy())
-	newH := int(float64(w) / ratio)
-
-	thumb := image.NewRGBA(image.Rect(0, 0, w, newH))
-	x_ratio := float64(bounds.Dx()) / float64(w)
-	y_ratio := float64(bounds.Dy()) / float64(newH)
-
-	for y := 0; y < newH; y++ {
-		for x := 0; x < w; x++ {
-			px := int(float64(x) * x_ratio)
-			py := int(float64(y) * y_ratio)
-			thumb.Set(x, y, img.At(px, py))
-		}
-	}
+	// Use Lanczos resampling for high-quality thumbnails
+	// Maintains aspect ratio automatically
+	thumb := imaging.Resize(img, w, 0, imaging.Lanczos)
 
 	var buf bytes.Buffer
-	jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 60})
+	// Use slightly higher quality (70) since Lanczos produces sharper results
+	jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 70})
 	b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
 
 	sendJSON(OutputEvent{
@@ -325,24 +315,47 @@ func processFile(fp string, job *JobRequest) {
 	var url, thumb string
 	var err error
 
-	switch job.Service {
-	case "imx.to":
-		url, thumb, err = uploadImx(fp, job)
-	case "pixhost.to":
-		url, thumb, err = uploadPixhost(fp, job)
-	case "vipr.im":
-		url, thumb, err = uploadVipr(fp, job)
-	case "turboimagehost":
-		url, thumb, err = uploadTurbo(fp, job)
-	case "imagebam.com":
-		url, thumb, err = uploadImageBam(fp, job)
-	default:
-		err = fmt.Errorf("unknown service: %s", job.Service)
+	// Retry with exponential backoff: 2s, 4s, 8s (max 3 attempts)
+	maxRetries := 3
+	baseDelay := 2 * time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1)) // 2s, 4s, 8s
+			sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: fmt.Sprintf("Retry %d/%d in %v", attempt, maxRetries-1, delay)})
+			time.Sleep(delay)
+			sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
+		}
+
+		switch job.Service {
+		case "imx.to":
+			url, thumb, err = uploadImx(fp, job)
+		case "pixhost.to":
+			url, thumb, err = uploadPixhost(fp, job)
+		case "vipr.im":
+			url, thumb, err = uploadVipr(fp, job)
+		case "turboimagehost":
+			url, thumb, err = uploadTurbo(fp, job)
+		case "imagebam.com":
+			url, thumb, err = uploadImageBam(fp, job)
+		default:
+			err = fmt.Errorf("unknown service: %s", job.Service)
+		}
+
+		// Success - exit retry loop
+		if err == nil {
+			break
+		}
+
+		// Log the error but continue retrying
+		if attempt < maxRetries-1 {
+			sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: fmt.Sprintf("Attempt %d failed: %v", attempt+1, err)})
+		}
 	}
 
 	if err != nil {
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Failed"})
-		sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: err.Error()})
+		sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: fmt.Sprintf("Failed after %d attempts: %v", maxRetries, err)})
 	} else {
 		sendJSON(OutputEvent{Type: "result", FilePath: fp, Url: url, Thumb: thumb})
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Done"})
