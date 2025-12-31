@@ -215,4 +215,11 @@ class ViprPlugin(ImageHostPlugin):
 
         threading.Thread(target=_task, daemon=True).start()
 
-    # REMOVED: initialize_session, upload_file (Go handles this now)
+    # Go-based upload - stubs for abstract methods (uploads handled by Go sidecar)
+    def initialize_session(self, config: Dict[str, Any], creds: Dict[str, Any]) -> Dict[str, Any]:
+        """Stub - Go sidecar handles session initialization."""
+        return {}
+
+    def upload_file(self, file_path: str, group, config: Dict[str, Any], context: Dict[str, Any], progress_callback):
+        """Stub - Go sidecar handles file uploads."""
+        pass

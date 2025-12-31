@@ -243,7 +243,7 @@ class PluginTestRunner:
         self.print_section("Testing Plugin Discovery")
 
         self.manager.load_plugins()
-        plugins = self.manager.get_all()
+        plugins = self.manager.get_all_plugins()
 
         print(f"  ✓ Loaded {len(plugins)} plugins")
         for plugin_id, plugin in plugins.items():
@@ -416,7 +416,7 @@ class PluginTestRunner:
         self.test_helper_usage()
 
         # Test each plugin
-        plugins = self.manager.get_all()
+        plugins = self.manager.get_all_plugins()
         total_tests = 0
         passed_tests = 0
 
