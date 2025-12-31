@@ -57,17 +57,21 @@ class SafeScrollableFrame(ctk.CTkScrollableFrame):
 
 class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
     def __init__(self):
+        """Initialize the uploader application."""
         super().__init__()
         self.TkdndVersion = TkinterDnD._require(self)
+        self._init_window()
+        self._init_variables()
+        self._init_state()
+        self._init_managers()
+        self._init_ui()
+        self._load_startup_file()
+
+    def _init_window(self):
+        """Initialize window properties (title, size, icon)."""
         self.title(f"Connie's Uploader Ultimate {config.APP_VERSION}")
         self.geometry("1250x850")
         self.minsize(1050, 720)
-
-        self.menu_thread_var = tk.IntVar(value=5)
-        self.var_show_previews = tk.BooleanVar(value=True)
-        self.var_separate_batches = tk.BooleanVar(value=False)
-        self.var_appearance_mode = tk.StringVar(value="System")
-        self.thumb_executor = ThreadPoolExecutor(max_workers=4)
 
         try:
             ico_path = config.resource_path("logo.ico")
@@ -82,24 +86,22 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         except Exception as e:
             print(f"Icon load warning: {e}")
 
-        self.settings_mgr = SettingsManager()
-        self.settings = self.settings_mgr.load()
-        self.template_mgr = TemplateManager()
+    def _init_variables(self):
+        """Initialize UI variables and executors."""
+        self.menu_thread_var = tk.IntVar(value=5)
+        self.var_show_previews = tk.BooleanVar(value=True)
+        self.var_separate_batches = tk.BooleanVar(value=False)
+        self.var_appearance_mode = tk.StringVar(value="System")
+        self.thumb_executor = ThreadPoolExecutor(max_workers=config.THUMBNAIL_WORKERS)
 
+        # Queues for thread communication
         self.progress_queue = queue.Queue()
         self.ui_queue = queue.Queue()
         self.result_queue = queue.Queue()
         self.cancel_event = threading.Event()
         self.lock = threading.Lock()
 
-        self.group_counter = 0
-        self.next_post_index = 0
-        self.post_holding_pen = {}
-        self.post_processing_lock = threading.Lock()
-        self.POST_COOLDOWN = 1.5
-
-        self.upload_manager = UploadManager(self.progress_queue, self.result_queue, self.cancel_event)
-
+        # UI state
         self.file_widgets = {}
         self.groups = []
         self.results = []
@@ -113,34 +115,58 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         self.current_output_files = []
         self.pix_galleries_to_finalize = []
 
-        # Drag & Drop State
+    def _init_state(self):
+        """Initialize application state tracking."""
+        # Batch/Group tracking
+        self.group_counter = 0
+
+        # Auto-posting state
+        self.next_post_index = 0
+        self.post_holding_pen = {}
+        self.post_processing_lock = threading.Lock()
+
+        # Drag & Drop state
         self.drag_data = {"item": None, "type": None, "y_start": 0, "widget_start": None}
         self.highlighted_row = None
         self.context_menu = tk.Menu(self, tearoff=0)
 
+        # Service-specific state
         self.vipr_galleries_map = {}
+
+    def _init_managers(self):
+        """Initialize manager objects and background workers."""
+        self.settings_mgr = SettingsManager()
+        self.settings = self.settings_mgr.load()
+        self.template_mgr = TemplateManager()
+        self.upload_manager = UploadManager(self.progress_queue, self.result_queue, self.cancel_event)
+
         self._load_credentials()
         self.rename_worker = RenameWorker(self.creds)
         self.rename_worker.start()
 
+        # Central history directory
         self.central_history_path = os.path.join(os.path.expanduser("~"), ".conniesuploader", "history")
         if not os.path.exists(self.central_history_path):
             os.makedirs(self.central_history_path)
 
         self.saved_threads_data = viper_api.load_saved_threads()
 
+    def _init_ui(self):
+        """Initialize user interface (menu, layout, drag-and-drop)."""
         self._create_menu()
         self._create_layout()
         self._apply_settings()
 
         self.drop_target_register(DND_FILES)
         self.dnd_bind("<<Drop>>", self.drop_files)
-
         self.bind("<Button-1>", self._clear_highlights, add="+")
 
+    def _load_startup_file(self):
+        """Load file from command line argument if provided."""
         if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
             self.after(500, lambda: self._process_files([sys.argv[1]]))
 
+        # Start UI update loop
         self.after(100, self.update_ui_loop)
 
     def _load_credentials(self):
@@ -806,58 +832,17 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
                     else:
                         logger.error(f"Auto-Post Queue: Batch #{self.next_post_index} FAILED.")
                 self.next_post_index += 1
-                time.sleep(self.POST_COOLDOWN)
+                time.sleep(config.POST_COOLDOWN_SECONDS)
             else:
                 time.sleep(0.5)
         logger.info("Auto-Post Queue: Finished.")
 
     def update_ui_loop(self):
+        """Main UI update loop - processes all queues and checks upload completion."""
         try:
-            try:
-                while True:
-                    fp, img, thumb = self.result_queue.get_nowait()
-                    with self.lock:
-                        self.results.append((fp, img, thumb))
-            except queue.Empty:
-                pass
-
-            ui_limit = 10
-            try:
-                while ui_limit > 0:
-                    a, f, p, g = self.ui_queue.get_nowait()
-                    if a == "add" and g.winfo_exists():
-                        self._create_row(f, p, g)
-                    ui_limit -= 1
-            except queue.Empty:
-                pass
-
-            prog_limit = 50
-            try:
-                while prog_limit > 0:
-                    item = self.progress_queue.get_nowait()
-                    k = item[0]
-                    if k == "register_pix_gal":
-                        new_data = item[2]
-                        self.pix_galleries_to_finalize.append(new_data)
-                    else:
-                        f = item[1]
-                        v = item[2]
-                        if f in self.file_widgets:
-                            w = self.file_widgets[f]
-                            if k == "status":
-                                w["status"].configure(text=v)
-                                if v in ["Done", "Failed"]:
-                                    with self.lock:
-                                        self.upload_count += 1
-                                    w["state"] = "success" if v == "Done" else "failed"
-                                    w["prog"].set(1.0)
-                                    w["prog"].configure(progress_color="#34C759" if v == "Done" else "#FF3B30")
-                                    self._update_group_progress(f)
-                            elif k == "prog":
-                                w["prog"].set(v)
-                    prog_limit -= 1
-            except queue.Empty:
-                pass
+            self._process_result_queue()
+            self._process_ui_queue()
+            self._process_progress_queue()
 
             if self.is_uploading:
                 with self.lock:
@@ -866,7 +851,59 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         except Exception as e:
             print(f"UI Loop Error: {e}")
         finally:
-            self.after(10, self.update_ui_loop)
+            self.after(config.UI_UPDATE_INTERVAL_MS, self.update_ui_loop)
+
+    def _process_result_queue(self):
+        """Process upload results from result_queue."""
+        try:
+            while True:
+                fp, img, thumb = self.result_queue.get_nowait()
+                with self.lock:
+                    self.results.append((fp, img, thumb))
+        except queue.Empty:
+            pass
+
+    def _process_ui_queue(self):
+        """Process UI updates from ui_queue (batch file additions)."""
+        ui_limit = config.UI_QUEUE_BATCH_SIZE
+        try:
+            while ui_limit > 0:
+                a, f, p, g = self.ui_queue.get_nowait()
+                if a == "add" and g.winfo_exists():
+                    self._create_row(f, p, g)
+                ui_limit -= 1
+        except queue.Empty:
+            pass
+
+    def _process_progress_queue(self):
+        """Process progress updates from progress_queue (status changes, progress bars)."""
+        prog_limit = config.PROGRESS_UPDATE_BATCH_SIZE
+        try:
+            while prog_limit > 0:
+                item = self.progress_queue.get_nowait()
+                k = item[0]
+                if k == "register_pix_gal":
+                    new_data = item[2]
+                    self.pix_galleries_to_finalize.append(new_data)
+                else:
+                    f = item[1]
+                    v = item[2]
+                    if f in self.file_widgets:
+                        w = self.file_widgets[f]
+                        if k == "status":
+                            w["status"].configure(text=v)
+                            if v in ["Done", "Failed"]:
+                                with self.lock:
+                                    self.upload_count += 1
+                                w["state"] = "success" if v == "Done" else "failed"
+                                w["prog"].set(1.0)
+                                w["prog"].configure(progress_color="#34C759" if v == "Done" else "#FF3B30")
+                                self._update_group_progress(f)
+                        elif k == "prog":
+                            w["prog"].set(v)
+                prog_limit -= 1
+        except queue.Empty:
+            pass
 
     def _create_row(self, fp, pil_image, group_widget):
         group_widget.add_file(fp)
