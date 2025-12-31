@@ -18,7 +18,7 @@ class RenameWorker(threading.Thread):
     def __init__(self, creds):
         super().__init__(daemon=True)
         self.creds = creds
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=200)
         self.active = True
 
     def add_task(self, service, gallery_id, new_name):
@@ -50,9 +50,9 @@ class RenameWorker(threading.Thread):
 
 class UploadController:
     def __init__(self):
-        self.progress_queue = queue.Queue()
-        self.ui_queue = queue.Queue()
-        self.result_queue = queue.Queue()
+        self.progress_queue = queue.Queue(maxsize=1000)
+        self.ui_queue = queue.Queue(maxsize=500)
+        self.result_queue = queue.Queue(maxsize=1000)
         self.cancel_event = threading.Event()
 
         self.upload_manager = UploadManager(self.progress_queue, self.result_queue, self.cancel_event)

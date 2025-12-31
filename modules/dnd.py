@@ -101,20 +101,23 @@ class DragDropMixin:
         target_group, target_row_widget = self._find_target_row_and_group(target_widget)
 
         if target_group:
-            current_group = self.file_widgets[fp]["group"]
+            with self.lock:
+                current_group = self.file_widgets[fp]["group"]
 
             if target_group == current_group:
                 if target_row_widget and target_row_widget != self.drag_data["widget_start"]:
                     target_fp = None
-                    for f, w in self.file_widgets.items():
-                        if w["row"] == target_row_widget:
-                            target_fp = f
-                            break
+                    with self.lock:
+                        for f, w in self.file_widgets.items():
+                            if w["row"] == target_row_widget:
+                                target_fp = f
+                                break
                     if target_fp:
                         current_group.files.remove(fp)
                         idx = current_group.files.index(target_fp)
                         current_group.files.insert(idx, fp)
-                        self.file_widgets[fp]["row"].pack(before=target_row_widget)
+                        with self.lock:
+                            self.file_widgets[fp]["row"].pack(before=target_row_widget)
             else:
                 self._move_file_to_group(fp, current_group, target_group, before_widget=target_row_widget)
 
@@ -137,10 +140,11 @@ class DragDropMixin:
             if isinstance(curr, CollapsibleGroupFrame):
                 found_group = curr
             if not found_row:
-                for data in self.file_widgets.values():
-                    if data["row"] == curr:
-                        found_row = curr
-                        break
+                with self.lock:
+                    for data in self.file_widgets.values():
+                        if data["row"] == curr:
+                            found_row = curr
+                            break
             if found_group:
                 break
             try:
@@ -154,10 +158,11 @@ class DragDropMixin:
         old_group.remove_file(fp)
         if before_widget:
             target_fp = None
-            for f, w in self.file_widgets.items():
-                if w["row"] == before_widget:
-                    target_fp = f
-                    break
+            with self.lock:
+                for f, w in self.file_widgets.items():
+                    if w["row"] == before_widget:
+                        target_fp = f
+                        break
             if target_fp and target_fp in new_group.files:
                 idx = new_group.files.index(target_fp)
                 new_group.files.insert(idx, fp)
@@ -166,12 +171,14 @@ class DragDropMixin:
         else:
             new_group.add_file(fp)
 
-        w_data = self.file_widgets[fp]
-        old_row = w_data["row"]
+        with self.lock:
+            w_data = self.file_widgets[fp]
+            old_row = w_data["row"]
         old_row.destroy()
 
         self._create_row(fp, None, new_group)
-        new_row = self.file_widgets[fp]["row"]
+        with self.lock:
+            new_row = self.file_widgets[fp]["row"]
 
         if before_widget:
             try:
@@ -189,7 +196,8 @@ class DragDropMixin:
 
     def _show_row_context(self, event, filepath):
         self._clear_highlights()
-        row = self.file_widgets[filepath]["row"]
+        with self.lock:
+            row = self.file_widgets[filepath]["row"]
         self.highlighted_row = row
         row.configure(fg_color="#E0E0E0" if ctk.get_appearance_mode() == "Light" else "#404040")
 
@@ -200,26 +208,31 @@ class DragDropMixin:
     def _delete_group(self, group):
         if messagebox.askyesno("Confirm", f"Delete batch '{group.title}'?"):
             for fp in list(group.files):
-                if fp in self.file_widgets:
-                    # Clean up image reference to prevent memory leak
-                    img_ref = self.file_widgets[fp].get("image_ref")
-                    if img_ref and img_ref in self.image_refs:
-                        self.image_refs.remove(img_ref)
-                    del self.file_widgets[fp]
+                with self.lock:
+                    if fp in self.file_widgets:
+                        # Clean up image reference to prevent memory leak
+                        img_ref = self.file_widgets[fp].get("image_ref")
+                        if img_ref and img_ref in self.image_refs:
+                            self.image_refs.remove(img_ref)
+                        del self.file_widgets[fp]
             if group in self.groups:
                 self.groups.remove(group)
             group.destroy()
 
     def _delete_file(self, filepath):
-        if filepath in self.file_widgets:
+        with self.lock:
+            if filepath not in self.file_widgets:
+                self._clear_highlights()
+                return
             group = self.file_widgets[filepath]["group"]
             row = self.file_widgets[filepath]["row"]
             # Clean up image reference to prevent memory leak
             img_ref = self.file_widgets[filepath].get("image_ref")
             if img_ref and img_ref in self.image_refs:
                 self.image_refs.remove(img_ref)
-            if group.winfo_exists():
-                group.remove_file(filepath)
-            row.destroy()
+        if group.winfo_exists():
+            group.remove_file(filepath)
+        row.destroy()
+        with self.lock:
             del self.file_widgets[filepath]
         self._clear_highlights()

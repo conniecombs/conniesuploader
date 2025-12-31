@@ -171,7 +171,7 @@ class SidecarBridge:
         Sends a command and waits for a specific response.
         Used for login/verification/scraping.
         """
-        temp_q = queue.Queue()
+        temp_q = queue.Queue(maxsize=100)
         self.add_listener(temp_q)
         self.send_cmd(payload)
 
