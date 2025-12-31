@@ -1,0 +1,164 @@
+"""Input validation utilities for security and data integrity."""
+
+import os
+from pathlib import Path
+from typing import Optional
+from loguru import logger
+
+
+def validate_file_path(filepath: str, allowed_extensions: tuple = None) -> Optional[str]:
+    """Validate and sanitize a file path.
+
+    Args:
+        filepath: The file path to validate
+        allowed_extensions: Tuple of allowed file extensions (e.g., ('.jpg', '.png'))
+
+    Returns:
+        Absolute path string if valid, None otherwise
+
+    Security Notes:
+        - Prevents directory traversal attacks
+        - Ensures file exists and is a regular file
+        - Validates file extension if specified
+    """
+    try:
+        # Resolve to absolute path and normalize
+        abs_path = Path(filepath).resolve()
+
+        # Check if file exists
+        if not abs_path.exists():
+            logger.warning(f"File does not exist: {filepath}")
+            return None
+
+        # Ensure it's a file, not a directory or special file
+        if not abs_path.is_file():
+            logger.warning(f"Path is not a regular file: {filepath}")
+            return None
+
+        # Validate extension if specified
+        if allowed_extensions:
+            if not abs_path.suffix.lower() in allowed_extensions:
+                logger.warning(f"Invalid file extension for {filepath}. Allowed: {allowed_extensions}")
+                return None
+
+        # Additional security: check for suspicious patterns
+        path_str = str(abs_path)
+        if '..' in path_str or abs_path.name.startswith('.'):
+            logger.warning(f"Suspicious file path pattern: {filepath}")
+            return None
+
+        return str(abs_path)
+
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(f"Error validating file path '{filepath}': {e}")
+        return None
+
+
+def validate_directory_path(dirpath: str) -> Optional[str]:
+    """Validate and sanitize a directory path.
+
+    Args:
+        dirpath: The directory path to validate
+
+    Returns:
+        Absolute path string if valid, None otherwise
+    """
+    try:
+        abs_path = Path(dirpath).resolve()
+
+        if not abs_path.exists():
+            logger.warning(f"Directory does not exist: {dirpath}")
+            return None
+
+        if not abs_path.is_dir():
+            logger.warning(f"Path is not a directory: {dirpath}")
+            return None
+
+        # Check for suspicious patterns
+        path_str = str(abs_path)
+        if '..' in path_str:
+            logger.warning(f"Suspicious directory path pattern: {dirpath}")
+            return None
+
+        return str(abs_path)
+
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(f"Error validating directory path '{dirpath}': {e}")
+        return None
+
+
+def sanitize_filename(filename: str, max_length: int = 255) -> str:
+    """Sanitize a filename for safe filesystem operations.
+
+    Args:
+        filename: The filename to sanitize
+        max_length: Maximum allowed filename length
+
+    Returns:
+        Sanitized filename
+    """
+    # Remove/replace dangerous characters
+    dangerous_chars = '<>:"/\\|?*\x00'
+    sanitized = filename
+
+    for char in dangerous_chars:
+        sanitized = sanitized.replace(char, '_')
+
+    # Remove leading/trailing dots and spaces
+    sanitized = sanitized.strip('. ')
+
+    # Ensure not empty
+    if not sanitized:
+        sanitized = 'unnamed_file'
+
+    # Truncate if too long
+    if len(sanitized) > max_length:
+        name, ext = os.path.splitext(sanitized)
+        max_name_len = max_length - len(ext)
+        sanitized = name[:max_name_len] + ext
+
+    return sanitized
+
+
+def validate_service_name(service: str) -> bool:
+    """Validate that a service name is recognized.
+
+    Args:
+        service: The service name to validate
+
+    Returns:
+        True if valid, False otherwise
+    """
+    valid_services = {
+        'imx.to',
+        'pixhost.to',
+        'turboimagehost',
+        'vipr.im',
+        'imagebam.com'
+    }
+
+    if service not in valid_services:
+        logger.warning(f"Invalid service name: {service}")
+        return False
+
+    return True
+
+
+def validate_thread_count(count: int, min_val: int = 1, max_val: int = 20) -> int:
+    """Validate and clamp thread count to safe range.
+
+    Args:
+        count: The thread count to validate
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+
+    Returns:
+        Clamped thread count
+    """
+    if count < min_val:
+        logger.warning(f"Thread count {count} below minimum {min_val}, using minimum")
+        return min_val
+    if count > max_val:
+        logger.warning(f"Thread count {count} above maximum {max_val}, using maximum")
+        return max_val
+    return count

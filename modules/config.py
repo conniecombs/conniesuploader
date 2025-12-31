@@ -39,6 +39,27 @@ SETTINGS_FILE = "user_settings.json"
 CRASH_LOG_FILE = "crash_log.log"
 UI_THUMB_SIZE = (40, 40)
 
+# Upload Configuration
+DEFAULT_THREAD_COUNT = 5
+MIN_THREAD_COUNT = 1
+MAX_THREAD_COUNT = 20
+DEFAULT_UPLOAD_TIMEOUT = 120  # seconds
+
+# Thread Pool Configuration
+THUMBNAIL_WORKERS = 4
+GO_WORKER_POOL_SIZE = 8
+
+# Auto-Post Configuration
+POST_COOLDOWN_SECONDS = 1.5
+
+# File Size Limits (in bytes)
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILENAME_LENGTH = 255
+
+# UI Update Intervals
+UI_UPDATE_INTERVAL_MS = 10
+PROGRESS_UPDATE_BATCH_SIZE = 50
+
 # Keyring Services
 KEYRING_SERVICE_API = "ImageUploader:imx_api_key"
 KEYRING_SERVICE_USER = "ImageUploader:imx_username"

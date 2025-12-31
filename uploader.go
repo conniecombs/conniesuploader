@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
-	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -68,17 +68,23 @@ func quoteEscape(s string) string { return quoteEscaper.Replace(s) }
 
 const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
+// randomString generates a random alphanumeric string of length n.
+// Uses crypto/rand for cryptographically secure random generation.
 func randomString(n int) string {
 	b := make([]byte, n)
+	// Use crypto/rand for better randomness
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based string if crypto/rand fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
 }
 
 func main() {
-	// Global seed is auto-initialized in newer Go versions, but this doesn't hurt.
-	// rand.Seed(time.Now().UnixNano()) 
+	// Note: Using crypto/rand for random string generation (more secure) 
 
 	jar, _ := cookiejar.New(nil)
 	client = &http.Client{
@@ -771,6 +777,9 @@ func scrapeBBCode(urlStr string) (string, string, error) {
 func handleViperLogin(job JobRequest) {
 	user, pass := job.Creds["vg_user"], job.Creds["vg_pass"]
 	doRequest("GET", "https://vipergirls.to/login.php?do=login", nil, "")
+
+	// SECURITY NOTE: ViperGirls uses MD5 for authentication (legacy vBulletin system).
+	// This is required by their API and not our choice. Users should use unique passwords.
 	hasher := md5.New()
 	hasher.Write([]byte(pass))
 	md5Pass := hex.EncodeToString(hasher.Sum(nil))
