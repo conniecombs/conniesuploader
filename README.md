@@ -210,6 +210,40 @@ This design provides:
 - Responsive UI during heavy operations
 - Cross-platform compatibility
 
+### Code Quality & Organization
+
+Recent major refactoring improvements (v3.5.0):
+
+**Modular Architecture:**
+- `CredentialsManager` - Data-driven credential management with auto-generated UI
+- `AutoPoster` - Isolated ViperGirls forum posting logic
+- `UploadManager` - Upload orchestration and worker management
+- `TemplateManager` - Template system for output formatting
+- `SettingsManager` - Persistent configuration management
+- `ValidationModule` - Security-focused input validation
+
+**Security Enhancements:**
+- Cryptographically secure random generation (`crypto/rand`)
+- Path traversal attack prevention
+- Input sanitization for file operations
+- Secure credential storage via system keyring
+- Type hints for critical functions (Python typing module)
+
+**Code Quality:**
+- Comprehensive error handling with specific exception types
+- Extensive logging via `loguru` for debugging
+- Consistent code formatting (`black` for Python, `gofmt` for Go)
+- Clear separation of concerns
+- Named constants for all configuration values
+- Thorough documentation and docstrings
+
+**Performance:**
+- Go worker pool (8 concurrent workers) prevents goroutine explosion
+- Configurable thread limits per service
+- Efficient queue-based UI updates
+- Thumbnail generation via Go sidecar
+- Batch processing with progress tracking
+
 ## Troubleshooting
 
 ### Common Issues
