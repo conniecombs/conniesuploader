@@ -16,7 +16,7 @@ class UploadManager:
         self.cancel_event = cancel_event
         self.bridge = SidecarBridge.get()
 
-        self.event_queue = queue.Queue()
+        self.event_queue = queue.Queue(maxsize=1000)
         self.listener_thread = None
 
     def start_batch(self, pending_by_group, cfg, creds):

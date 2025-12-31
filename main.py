@@ -98,9 +98,9 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         self.thumb_executor = ThreadPoolExecutor(max_workers=config.THUMBNAIL_WORKERS)
 
         # Queues for thread communication
-        self.progress_queue = queue.Queue()
-        self.ui_queue = queue.Queue()
-        self.result_queue = queue.Queue()
+        self.progress_queue = queue.Queue(maxsize=1000)
+        self.ui_queue = queue.Queue(maxsize=500)
+        self.result_queue = queue.Queue(maxsize=1000)
         self.cancel_event = threading.Event()
         self.lock = threading.Lock()
 
@@ -169,6 +169,9 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
 
         # Start UI update loop
         self.after(100, self.update_ui_loop)
+
+        # Start periodic image cleanup to prevent memory leaks
+        self.after(30000, self._cleanup_orphaned_images)
 
     def _load_credentials(self):
         """Load credentials from system keyring using CredentialsManager."""
@@ -641,8 +644,9 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
 
     def _thumb_worker(self, files, group_widget, show_previews):
         for f in files:
-            if f in self.file_widgets:
-                continue
+            with self.lock:
+                if f in self.file_widgets:
+                    continue
             pil_image = None
             if show_previews:
                 try:
@@ -656,10 +660,11 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         pending_by_group = {}
         for grp in self.groups:
             for fp in grp.files:
-                if self.file_widgets[fp]["state"] == "pending":
-                    if grp not in pending_by_group:
-                        pending_by_group[grp] = []
-                    pending_by_group[grp].append(fp)
+                with self.lock:
+                    if self.file_widgets[fp]["state"] == "pending":
+                        if grp not in pending_by_group:
+                            pending_by_group[grp] = []
+                        pending_by_group[grp].append(fp)
 
         if not pending_by_group:
             messagebox.showinfo("Info", "No pending files found. Please add files or use 'Retry Failed'.")
@@ -673,7 +678,7 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
 
             self.cancel_event.clear()
             self.results = []
-            self.result_queue = queue.Queue()
+            self.result_queue = queue.Queue(maxsize=1000)
             self.upload_manager.result_queue = self.result_queue
 
             self.pix_galleries_to_finalize = []
@@ -696,7 +701,8 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
 
             for files in pending_by_group.values():
                 for fp in files:
-                    self.file_widgets[fp]["state"] = "queued"
+                    with self.lock:
+                        self.file_widgets[fp]["state"] = "queued"
 
             # Reset and prepare AutoPoster
             self.auto_poster.reset()
@@ -820,15 +826,17 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         pr = ctk.CTkProgressBar(row, width=100)
         pr.set(0)
         pr.pack(side="right", padx=5)
-        self.file_widgets[fp] = {
-            "row": row,
-            "status": st,
-            "prog": pr,
-            "state": "pending",
-            "group": group_widget,
-            "image_ref": img_widget  # Store reference for cleanup
-        }
-        self.lbl_eta.configure(text=f"Files: {len(self.file_widgets)}")
+        with self.lock:
+            self.file_widgets[fp] = {
+                "row": row,
+                "status": st,
+                "prog": pr,
+                "state": "pending",
+                "group": group_widget,
+                "image_ref": img_widget  # Store reference for cleanup
+            }
+            file_count = len(self.file_widgets)
+        self.lbl_eta.configure(text=f"Files: {file_count}")
 
         def bind_row(w):
             w.bind("<Button-1>", lambda e, w=row, f=fp: self._on_row_drag_start(e, w, f))
@@ -842,10 +850,12 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
             bind_row(child)
 
     def _update_group_progress(self, fp):
-        if fp not in self.file_widgets:
-            return
+        with self.lock:
+            if fp not in self.file_widgets:
+                return
         try:
-            group = self.file_widgets[fp]["group"]
+            with self.lock:
+                group = self.file_widgets[fp]["group"]
             if not group.winfo_exists():
                 return
             total = len(group.files)
@@ -853,9 +863,10 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
                 return
             done = 0
             for f in group.files:
-                if f in self.file_widgets:
-                    if self.file_widgets[f]["state"] in ["success", "failed"]:
-                        done += 1
+                with self.lock:
+                    if f in self.file_widgets:
+                        if self.file_widgets[f]["state"] in ["success", "failed"]:
+                            done += 1
             group.prog.set(done / total)
             group.lbl_counts.configure(text=f"({done}/{total})")
             if done == total and not group.is_completed:
@@ -997,12 +1008,13 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
 
     def retry_failed(self):
         cnt = 0
-        for w in self.file_widgets.values():
-            if w["state"] == "failed":
-                w["status"].configure(text="Retry")
-                w["prog"].set(0)
-                w["state"] = "pending"
-                cnt += 1
+        with self.lock:
+            for w in self.file_widgets.values():
+                if w["state"] == "failed":
+                    w["status"].configure(text="Retry")
+                    w["prog"].set(0)
+                    w["state"] = "pending"
+                    cnt += 1
         if cnt:
             self.start_upload()
 
@@ -1017,12 +1029,29 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         for grp in self.groups:
             grp.destroy()
         self.groups.clear()
-        self.file_widgets.clear()
+        with self.lock:
+            self.file_widgets.clear()
         self.image_refs.clear()
         self.overall_progress.set(0)
         self.lbl_eta.configure(text="Cleared.")
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
+
+    def _cleanup_orphaned_images(self):
+        """Periodically clean up image references that are no longer in use."""
+        with self.lock:
+            # Keep only image refs that are still in file_widgets
+            active_refs = set()
+            for widget_data in self.file_widgets.values():
+                img_ref = widget_data.get("image_ref")
+                if img_ref:
+                    active_refs.add(img_ref)
+
+            # Remove orphaned refs
+            self.image_refs = [ref for ref in self.image_refs if ref in active_refs]
+
+        # Schedule next cleanup in 30 seconds
+        self.after(30000, self._cleanup_orphaned_images)
 
     def log(self, msg):
         logger.info(msg)
