@@ -26,6 +26,32 @@ class PixhostPlugin(ImageHostPlugin):
         return "Pixhost.to"
 
     @property
+    def metadata(self) -> Dict[str, Any]:
+        """Plugin metadata for Pixhost.to"""
+        return {
+            "version": "2.0.0",
+            "author": "Connie's Uploader Team",
+            "description": "Upload images to Pixhost.to with gallery support and cover image handling",
+            "website": "https://pixhost.to",
+            "implementation": "python",
+            "features": {
+                "galleries": True,
+                "covers": True,
+                "authentication": "none",
+                "direct_links": True,
+                "custom_thumbnails": True,
+            },
+            "credentials": [],  # No credentials required
+            "limits": {
+                "max_file_size": 50 * 1024 * 1024,  # 50MB
+                "allowed_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"],
+                "rate_limit": "Unlimited (respectful use)",
+                "max_resolution": (15000, 15000),
+                "min_resolution": (1, 1),
+            },
+        }
+
+    @property
     def settings_schema(self) -> List[Dict[str, Any]]:
         """
         Declarative UI schema for Pixhost settings.

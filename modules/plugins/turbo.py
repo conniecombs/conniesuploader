@@ -24,6 +24,47 @@ class TurboPlugin(ImageHostPlugin):
         return "TurboImageHost"
 
     @property
+    def metadata(self) -> Dict[str, Any]:
+        """Plugin metadata for TurboImageHost"""
+        return {
+            "version": "2.0.0",
+            "author": "Connie's Uploader Team",
+            "description": "Upload images to TurboImageHost with optional authentication, dynamic endpoint configuration, and cover image support",
+            "website": "https://www.turboimagehost.com",
+            "implementation": "python",
+            "features": {
+                "galleries": True,
+                "covers": True,
+                "authentication": "optional",
+                "direct_links": True,
+                "custom_thumbnails": True,
+                "dynamic_endpoint": True,  # Fetches upload endpoint dynamically
+            },
+            "credentials": [
+                {
+                    "key": "turbo_user",
+                    "label": "Username",
+                    "required": False,
+                    "description": "Optional login for enhanced features",
+                },
+                {
+                    "key": "turbo_pass",
+                    "label": "Password",
+                    "required": False,
+                    "secret": True,
+                    "description": "Password for enhanced features",
+                },
+            ],
+            "limits": {
+                "max_file_size": 50 * 1024 * 1024,  # 50MB
+                "allowed_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"],
+                "rate_limit": "Moderate (respectful use)",
+                "max_resolution": (15000, 15000),
+                "min_resolution": (1, 1),
+            },
+        }
+
+    @property
     def settings_schema(self) -> List[Dict[str, Any]]:
         """Declarative UI schema for Turbo settings."""
         return [

@@ -18,6 +18,75 @@ class ImageHostPlugin(abc.ABC):
         """Display name (e.g., 'IMX.to')"""
         pass
 
+    # --- Phase 2: Plugin Metadata ---
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """
+        Plugin metadata for documentation, validation, and feature detection.
+
+        Returns a dictionary containing plugin information:
+
+        Example:
+            {
+                "version": "2.0.0",
+                "author": "Plugin Developer",
+                "description": "Upload images to ServiceName with gallery support",
+                "website": "https://servicenam.com",
+                "implementation": "python",  # "python" or "go"
+                "features": {
+                    "galleries": True,
+                    "covers": True,
+                    "authentication": "optional",  # "required", "optional", "none"
+                    "direct_links": True,
+                    "custom_thumbnails": True
+                },
+                "credentials": [
+                    {
+                        "key": "service_user",
+                        "label": "Username",
+                        "required": False,
+                        "description": "Optional login for private galleries"
+                    },
+                    {
+                        "key": "service_pass",
+                        "label": "Password",
+                        "required": False,
+                        "secret": True
+                    }
+                ],
+                "limits": {
+                    "max_file_size": 50 * 1024 * 1024,  # 50MB in bytes
+                    "allowed_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+                    "rate_limit": "100/hour",
+                    "max_resolution": (10000, 10000),  # (width, height)
+                    "min_resolution": (100, 100)
+                }
+            }
+
+        All fields are optional except version. Recommended fields:
+            - version: Plugin version (semver recommended)
+            - author: Plugin maintainer
+            - description: One-line description
+            - implementation: "python" or "go"
+            - features: Dictionary of supported features
+            - credentials: List of required/optional credentials
+            - limits: Service limitations
+
+        This metadata is used for:
+            - Plugin documentation
+            - Feature detection
+            - File validation before upload
+            - Credential validation
+            - User guidance
+        """
+        return {
+            "version": "1.0.0",
+            "author": "Unknown",
+            "description": "Image hosting plugin",
+            "implementation": "python",
+        }
+
     # --- NEW: Schema-Based Settings (Recommended) ---
 
     @property

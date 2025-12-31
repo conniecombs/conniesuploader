@@ -24,6 +24,53 @@ class ImxPlugin(ImageHostPlugin):
         return "IMX.to"
 
     @property
+    def metadata(self) -> Dict[str, Any]:
+        """Plugin metadata for IMX.to"""
+        return {
+            "version": "2.0.0",
+            "author": "Connie's Uploader Team",
+            "description": "Upload images to IMX.to with gallery support, multiple thumbnail formats, and API-based uploads",
+            "website": "https://imx.to",
+            "implementation": "go",
+            "features": {
+                "galleries": True,
+                "covers": True,
+                "authentication": "required",
+                "direct_links": True,
+                "custom_thumbnails": True,
+                "thumbnail_formats": True,  # Fixed Width, Height, Proportional, Square
+            },
+            "credentials": [
+                {
+                    "key": "imx_api",
+                    "label": "API Key",
+                    "required": True,
+                    "description": "IMX.to API key for uploads",
+                },
+                {
+                    "key": "imx_user",
+                    "label": "Username",
+                    "required": False,
+                    "description": "Username for gallery creation (optional)",
+                },
+                {
+                    "key": "imx_pass",
+                    "label": "Password",
+                    "required": False,
+                    "secret": True,
+                    "description": "Password for gallery creation (optional)",
+                },
+            ],
+            "limits": {
+                "max_file_size": 50 * 1024 * 1024,  # 50MB
+                "allowed_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+                "rate_limit": "API rate limited (handled by service)",
+                "max_resolution": (15000, 15000),
+                "min_resolution": (1, 1),
+            },
+        }
+
+    @property
     def settings_schema(self) -> List[Dict[str, Any]]:
         """Declarative UI schema for IMX settings."""
         return [

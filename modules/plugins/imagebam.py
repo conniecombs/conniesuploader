@@ -24,6 +24,46 @@ class ImageBamPlugin(ImageHostPlugin):
         return "ImageBam"
 
     @property
+    def metadata(self) -> Dict[str, Any]:
+        """Plugin metadata for ImageBam.com"""
+        return {
+            "version": "2.0.0",
+            "author": "Connie's Uploader Team",
+            "description": "Upload images to ImageBam.com with optional authentication and CSRF-protected uploads",
+            "website": "https://imagebam.com",
+            "implementation": "python",
+            "features": {
+                "galleries": True,
+                "covers": False,
+                "authentication": "optional",
+                "direct_links": True,
+                "custom_thumbnails": True,
+            },
+            "credentials": [
+                {
+                    "key": "imagebam_user",
+                    "label": "Username",
+                    "required": False,
+                    "description": "Optional login for private galleries",
+                },
+                {
+                    "key": "imagebam_pass",
+                    "label": "Password",
+                    "required": False,
+                    "secret": True,
+                    "description": "Password for private galleries",
+                },
+            ],
+            "limits": {
+                "max_file_size": 25 * 1024 * 1024,  # 25MB
+                "allowed_formats": [".jpg", ".jpeg", ".png", ".gif"],
+                "rate_limit": "Moderate (CSRF protection)",
+                "max_resolution": (10000, 10000),
+                "min_resolution": (1, 1),
+            },
+        }
+
+    @property
     def settings_schema(self) -> List[Dict[str, Any]]:
         """Declarative UI schema for ImageBam settings."""
         return [

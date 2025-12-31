@@ -32,6 +32,47 @@ class ViprPlugin(ImageHostPlugin):
         return "Vipr.im"
 
     @property
+    def metadata(self) -> Dict[str, Any]:
+        """Plugin metadata for Vipr.im"""
+        return {
+            "version": "2.0.0",
+            "author": "Connie's Uploader Team",
+            "description": "Upload images to Vipr.im with dynamic gallery selection, cover support, and API-based uploads",
+            "website": "https://vipr.im",
+            "implementation": "go",
+            "features": {
+                "galleries": True,
+                "covers": True,
+                "authentication": "required",
+                "direct_links": True,
+                "custom_thumbnails": True,
+                "dynamic_galleries": True,  # Fetches user galleries via API
+            },
+            "credentials": [
+                {
+                    "key": "vipr_user",
+                    "label": "Username",
+                    "required": True,
+                    "description": "Vipr.im username for uploads and gallery access",
+                },
+                {
+                    "key": "vipr_pass",
+                    "label": "Password",
+                    "required": True,
+                    "secret": True,
+                    "description": "Vipr.im password",
+                },
+            ],
+            "limits": {
+                "max_file_size": 50 * 1024 * 1024,  # 50MB
+                "allowed_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+                "rate_limit": "API rate limited",
+                "max_resolution": (15000, 15000),
+                "min_resolution": (1, 1),
+            },
+        }
+
+    @property
     def settings_schema(self) -> List[Dict[str, Any]]:
         """Declarative UI schema for Vipr settings."""
         return [
