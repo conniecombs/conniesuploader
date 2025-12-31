@@ -1,24 +1,29 @@
 # Connie's Uploader Ultimate - Python Dependencies
+# Pinned versions for reproducible builds and security
+
 # GUI Framework
-customtkinter>=5.2.0
+customtkinter==5.2.2
 
 # Drag and Drop Support
-tkinterdnd2>=0.3.0
+tkinterdnd2==0.3.0
 
 # Image Processing
-Pillow>=10.0.0
+Pillow==10.4.0
+
+# HTML Parsing
+beautifulsoup4==4.12.3
 
 # HTTP Requests
-requests>=2.31.0
+requests==2.32.3
 
 # Logging
-loguru>=0.7.0
+loguru==0.7.2
 
 # Secure Credential Storage
-keyring>=24.0.0
+keyring==25.5.0
 
 # Clipboard Management
-pyperclip>=1.8.2
+pyperclip==1.9.0
 
 # Build Tools (for creating executable)
-pyinstaller>=6.0.0
+pyinstaller==6.11.1
