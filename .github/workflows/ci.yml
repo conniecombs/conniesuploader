@@ -11,6 +11,8 @@ jobs:
   go-build:
     name: Build Go Sidecar
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -37,6 +39,18 @@ jobs:
 
     - name: Download dependencies
       run: go mod download
+
+    - name: Tidy go.sum
+      run: |
+        go mod tidy
+        if ! git diff --quiet go.sum; then
+          echo "go.sum was updated by go mod tidy"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add go.sum
+          git commit -m "Auto-update go.sum checksums"
+          git push
+        fi
 
     - name: Verify dependencies
       run: go mod verify
