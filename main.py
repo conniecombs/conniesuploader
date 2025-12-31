@@ -806,6 +806,7 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         group_widget.add_file(fp)
         row = ctk.CTkFrame(group_widget.content_frame)
         row.pack(fill="x", pady=1)
+        img_widget = None
         if pil_image:
             img_widget = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=config.UI_THUMB_SIZE)
             l = ctk.CTkLabel(row, image=img_widget, text="")
@@ -819,7 +820,14 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         pr = ctk.CTkProgressBar(row, width=100)
         pr.set(0)
         pr.pack(side="right", padx=5)
-        self.file_widgets[fp] = {"row": row, "status": st, "prog": pr, "state": "pending", "group": group_widget}
+        self.file_widgets[fp] = {
+            "row": row,
+            "status": st,
+            "prog": pr,
+            "state": "pending",
+            "group": group_widget,
+            "image_ref": img_widget  # Store reference for cleanup
+        }
         self.lbl_eta.configure(text=f"Files: {len(self.file_widgets)}")
 
         def bind_row(w):
