@@ -481,7 +481,66 @@ func uploadImx(fp string, job *JobRequest) (string, string, error) {
 	if res.Status != "success" {
 		return "", "", fmt.Errorf("upload failed: %s", res.Msg)
 	}
+
+	// Scrape the actual BBCode from the image viewer page to get working thumbnail URLs
+	// The API returns incorrect/broken thumbnail URLs, but the web page has the correct ones
+	viewerURL := res.Data.Img
+	if viewerURL != "" {
+		scrapedViewer, scrapedThumb, err := scrapeImxBBCode(viewerURL)
+		if err == nil && scrapedThumb != "" {
+			// Successfully scraped - use those URLs instead
+			return scrapedViewer, scrapedThumb, nil
+		}
+		// Scraping failed - fall back to API response
+		log.WithFields(log.Fields{
+			"url":   viewerURL,
+			"error": err,
+		}).Warn("Failed to scrape IMX BBCode, using API response")
+	}
+
 	return res.Data.Img, res.Data.Thumb, nil
+}
+
+// scrapeImxBBCode fetches the IMX viewer page and extracts the BBCode thumbnail URL
+func scrapeImxBBCode(viewerURL string) (string, string, error) {
+	resp, err := doRequest("GET", viewerURL, nil, "")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch viewer page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	// Look for BBCode in textarea or input elements
+	// IMX typically puts BBCode in a textarea with specific patterns
+	var bbcode string
+	doc.Find("textarea, input[type='text']").Each(func(i int, s *goquery.Selection) {
+		text := s.Text()
+		if text == "" {
+			text, _ = s.Attr("value")
+		}
+		// Look for BBCode pattern: [url=...][img]...[/img][/url]
+		if strings.Contains(text, "[url=") && strings.Contains(text, "[img]") && strings.Contains(text, "[/img]") {
+			bbcode = text
+		}
+	})
+
+	if bbcode == "" {
+		return "", "", fmt.Errorf("no BBCode found on page")
+	}
+
+	// Parse BBCode to extract URLs
+	// Pattern: [url=VIEWER_URL][img]THUMB_URL[/img][/url]
+	reURL := regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
+	matches := reURL.FindStringSubmatch(bbcode)
+	if len(matches) < 3 {
+		return "", "", fmt.Errorf("failed to parse BBCode: %s", bbcode)
+	}
+
+	return matches[1], matches[2], nil
 }
 
 func uploadPixhost(fp string, job *JobRequest) (string, string, error) {
