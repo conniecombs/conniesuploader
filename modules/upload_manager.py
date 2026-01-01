@@ -97,8 +97,8 @@ class UploadManager:
             },
             "config": {
                 "threads": str(cfg.get(f"{cfg['service'].split('.')[0]}_threads", 2)),
-                "imx_thumb_id": self._map_imx_size(cfg.get("imx_thumb")),
-                "imx_format_id": self._map_imx_format(cfg.get("imx_format")),
+                "imx_thumb_id": self._map_imx_size(cfg.get("thumbnail_size") or cfg.get("imx_thumb")),
+                "imx_format_id": self._map_imx_format(cfg.get("thumbnail_format") or cfg.get("imx_format")),
                 "gallery_id": cfg.get("gallery_id", ""),
                 "pix_content": "1" if cfg.get("pix_content") == "Adult" else "0",
                 "pix_thumb": cfg.get("pix_thumb", "200"),
