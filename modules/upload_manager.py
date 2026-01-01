@@ -144,7 +144,7 @@ class UploadManager:
 
     # Helper Mappers
     def _map_imx_size(self, val):
-        return {"100": "1", "180": "2", "250": "3", "300": "4", "600": "5"}.get(val, "2")
+        return {"100": "1", "150": "6", "180": "2", "250": "3", "300": "4"}.get(val, "2")
 
     def _map_imx_format(self, val):
         return {"Fixed Width": "1", "Fixed Height": "4", "Proportional": "2", "Square": "3"}.get(val, "1")

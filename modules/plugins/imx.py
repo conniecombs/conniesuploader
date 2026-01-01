@@ -84,7 +84,7 @@ class ImxPlugin(ImageHostPlugin):
                 "type": "dropdown",
                 "key": "thumbnail_size",
                 "label": "Thumbnail Size",
-                "values": ["100", "180", "250", "300", "600"],
+                "values": ["100", "150", "180", "250", "300"],
                 "default": "180",
                 "required": True,
             },
