@@ -100,6 +100,17 @@ jobs:
         go mod download
         go build -v -ldflags="-s -w" -o uploader.exe uploader.go
 
+    - name: Verify Go sidecar exists
+      run: |
+        if (!(Test-Path "uploader.exe")) {
+          Write-Error "uploader.exe not found after build!"
+          exit 1
+        }
+        $size = (Get-Item "uploader.exe").length
+        $sizeMB = [math]::Round($size / 1MB, 2)
+        Write-Output "✅ Go sidecar built: $sizeMB MB"
+      shell: pwsh
+
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
@@ -114,20 +125,34 @@ jobs:
           --collect-all tkinterdnd2 `
           main.py
 
-    - name: Verify build
+    - name: Verify build and sidecar bundling
       run: |
         if (!(Test-Path "dist\ConniesUploader.exe")) {
           Write-Error "Build failed - ConniesUploader.exe not found"
           exit 1
         }
+
         $size = (Get-Item "dist\ConniesUploader.exe").length
         $sizeMB = [math]::Round($size / 1MB, 2)
         Write-Output "Build size: $sizeMB MB ($size bytes)"
+
+        # Check if sidecar was bundled (minimum expected size)
         if ($size -lt 40000000) {
-          Write-Warning "⚠️ Build size is ${sizeMB} MB (expected 40-50 MB)"
-          Write-Warning "Sidecar may not be properly bundled - continuing anyway"
+          Write-Error "❌ Build size is only ${sizeMB} MB (expected 40-50 MB)"
+          Write-Error "The Go sidecar appears to NOT be bundled!"
+          Write-Error "PyInstaller may have failed to include uploader.exe"
+
+          # Debug information
+          Write-Output "`nDebug info:"
+          Write-Output "PyInstaller spec file:"
+          Get-Content "ConniesUploader.spec" -ErrorAction SilentlyContinue
+
+          Write-Output "`nBuild directory contents:"
+          Get-ChildItem -Recurse "build" -ErrorAction SilentlyContinue | Select-Object FullName
+
+          exit 1
         } else {
-          Write-Output "✅ Build size OK ($sizeMB MB)"
+          Write-Output "✅ Build size OK ($sizeMB MB) - Sidecar appears to be bundled"
         }
       shell: pwsh
 
@@ -182,6 +207,15 @@ jobs:
         go mod download
         go build -v -ldflags="-s -w" -o uploader uploader.go
 
+    - name: Verify Go sidecar exists
+      run: |
+        if [ ! -f "uploader" ]; then
+          echo "❌ uploader not found after build!"
+          exit 1
+        fi
+        size=$(stat -f%z "uploader" 2>/dev/null || stat -c%s "uploader")
+        echo "✅ Go sidecar built: $size bytes"
+
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
@@ -195,14 +229,26 @@ jobs:
           --collect-all tkinterdnd2 \
           main.py
 
-    - name: Verify build
+    - name: Verify build and sidecar bundling
       run: |
         if [ ! -f "dist/ConniesUploader" ]; then
-          echo "Build failed - ConniesUploader not found"
+          echo "❌ Build failed - ConniesUploader not found"
           exit 1
         fi
+
         size=$(stat -f%z "dist/ConniesUploader" 2>/dev/null || stat -c%s "dist/ConniesUploader")
-        echo "Build size: $size bytes"
+        sizeMB=$((size / 1024 / 1024))
+        echo "Build size: $sizeMB MB ($size bytes)"
+
+        # Check if sidecar was bundled (minimum expected size: 40MB)
+        if [ $size -lt 40000000 ]; then
+          echo "❌ Build size is only ${sizeMB} MB (expected 40-50 MB)"
+          echo "The Go sidecar appears to NOT be bundled!"
+          echo "PyInstaller may have failed to include uploader binary"
+          exit 1
+        else
+          echo "✅ Build size OK (${sizeMB} MB) - Sidecar appears to be bundled"
+        fi
 
     - name: Calculate checksums
       run: |
@@ -251,6 +297,15 @@ jobs:
         go mod download
         go build -v -ldflags="-s -w" -o uploader uploader.go
 
+    - name: Verify Go sidecar exists
+      run: |
+        if [ ! -f "uploader" ]; then
+          echo "❌ uploader not found after build!"
+          exit 1
+        fi
+        size=$(stat -f%z "uploader")
+        echo "✅ Go sidecar built: $size bytes"
+
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
@@ -264,14 +319,26 @@ jobs:
           --collect-all tkinterdnd2 \
           main.py
 
-    - name: Verify build
+    - name: Verify build and sidecar bundling
       run: |
         if [ ! -f "dist/ConniesUploader" ]; then
-          echo "Build failed - ConniesUploader not found"
+          echo "❌ Build failed - ConniesUploader not found"
           exit 1
         fi
+
         size=$(stat -f%z "dist/ConniesUploader")
-        echo "Build size: $size bytes"
+        sizeMB=$((size / 1024 / 1024))
+        echo "Build size: $sizeMB MB ($size bytes)"
+
+        # Check if sidecar was bundled (minimum expected size: 40MB)
+        if [ $size -lt 40000000 ]; then
+          echo "❌ Build size is only ${sizeMB} MB (expected 40-50 MB)"
+          echo "The Go sidecar appears to NOT be bundled!"
+          echo "PyInstaller may have failed to include uploader binary"
+          exit 1
+        else
+          echo "✅ Build size OK (${sizeMB} MB) - Sidecar appears to be bundled"
+        fi
 
     - name: Calculate checksums
       run: |

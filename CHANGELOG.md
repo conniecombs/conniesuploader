@@ -40,8 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved checksum file organization
 
 - **Build Verification**
-  - Enhanced size checks with detailed warnings
-  - Improved error messages for debugging
+  - **Critical:** Sidecar bundling verification now fails build if not detected
+  - Pre-build verification ensures Go sidecar exists before PyInstaller runs
+  - Post-build size verification (40MB minimum) ensures sidecar was bundled
+  - Enhanced error messages with debug information for troubleshooting
   - Better artifact validation before publishing
 
 - **Performance**
