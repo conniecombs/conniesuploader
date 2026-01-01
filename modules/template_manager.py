@@ -33,11 +33,12 @@ class TemplateManager:
         }
         self.defaults.update(self.presets)
 
-        # Standard format: Clickable Thumbnails (Links to Viewer Page)
+        # Standard format: Clickable Images (Links to Viewer Page)
+        # Using #direct_url# instead of #thumb_url# for IMX.to compatibility
         self.image_formats = {
-            "BBCode": "[url=#image_url#][img]#thumb_url#[/img][/url]",
-            "Markdown": "[![Image](#thumb_url#)](#image_url#)",
-            "HTML": '<a href="#image_url#"><img src="#thumb_url#"></a>',
+            "BBCode": "[url=#image_url#][img]#direct_url#[/img][/url]",
+            "Markdown": "[![Image](#direct_url#)](#image_url#)",
+            "HTML": '<a href="#image_url#"><img src="#direct_url#"></a>',
         }
 
         # NEW: Full Size Image Formats (Links/Displays Direct Image)
@@ -135,14 +136,18 @@ class TemplateManager:
 
             filtered_images.append((viewer_url, thumb_url, direct_url))
 
-        # 2. Generate #all_images# (Thumbnails -> Links to Viewer)
+        # 2. Generate #all_images# (Direct Images -> Links to Viewer)
         img_fmt = self.image_formats.get(format_mode, self.image_formats["BBCode"])
         processed_images = []
         for v_url, t_url, d_url in filtered_images:
             item_str = img_fmt
-            # In standard list, #image_url# usually implies the link target (Viewer Page)
+            # Available placeholders:
+            # #image_url# - Link target (Viewer Page URL)
+            # #thumb_url# - Thumbnail image URL (may be broken on some hosts)
+            # #direct_url# - Direct image URL (full-size image)
             item_str = item_str.replace("#image_url#", str(v_url))
             item_str = item_str.replace("#thumb_url#", str(t_url))
+            item_str = item_str.replace("#direct_url#", str(d_url))
             processed_images.append(item_str)
         data["all_images"] = " ".join(processed_images)
 
