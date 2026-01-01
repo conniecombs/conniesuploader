@@ -258,6 +258,31 @@ Every commit is automatically:
 - **[Release Pipeline](.github/workflows/release.yml)** - Automated releases with checksums
 - **[Security Scanning](.github/workflows/security.yml)** - Daily vulnerability detection
 
+### Automated Release Process
+
+Releases are fully automated using modern GitHub Actions:
+
+**📋 Release Features:**
+- 🏷️ **Tag-based automation** - Push a version tag to trigger a release
+- 🔄 **Manual workflow dispatch** - Trigger releases from GitHub UI
+- 📦 **Cross-platform builds** - Simultaneous Windows, Linux, and macOS builds
+- 🔐 **SHA256 checksums** - Automatic generation for all artifacts
+- 📝 **Changelog integration** - Auto-extracts release notes from CHANGELOG.md
+- ⚡ **Build caching** - Fast builds with Go modules and pip caching
+- ✅ **Build verification** - Size checks and integrity validation
+
+**🚀 Creating a Release:**
+
+1. Update CHANGELOG.md with new version
+2. Create and push a git tag:
+   ```bash
+   git tag -a v1.0.1 -m "Release v1.0.1"
+   git push origin v1.0.1
+   ```
+3. Watch the automated workflow create the release!
+
+For detailed instructions, see **[RELEASE_PROCESS.md](RELEASE_PROCESS.md)**
+
 ### Security
 
 **Zero Known Vulnerabilities** - All dependencies are up-to-date and scanned daily:
