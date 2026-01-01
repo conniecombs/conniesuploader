@@ -131,8 +131,21 @@ class UploadManager:
 
                 if evt == "status":
                     self.progress_queue.put(("status", fp, data.get("status")))
+                
                 elif evt == "result":
-                    self.result_queue.put((fp, data.get("url"), data.get("thumb")))
+                    url = data.get("url")
+                    thumb = data.get("thumb")
+
+                    # --- HOTFIX: IMX Server Issue ---
+                    # Intercept broken IMX thumbnails (image.imx.to/u/t/) and fix them to i.imx.to/t/
+                    if thumb and "image.imx.to/u/t/" in thumb:
+                        thumb = thumb.replace("image.imx.to/u/t/", "i.imx.to/t/")
+                        # Optional debug log
+                        # logger.debug(f"Patched IMX thumbnail for {fp}")
+                    # --------------------------------
+                    
+                    self.result_queue.put((fp, url, thumb))
+
                 elif evt == "batch_complete":
                     # Optional: handle batch completion logic here if needed
                     pass

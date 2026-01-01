@@ -407,6 +407,28 @@ func processFile(fp string, job *JobRequest) {
 
 // --- Upload Implementations ---
 
+// Helpers to map UI strings to IMX API IDs
+func getImxSizeId(s string) string {
+	switch s {
+	case "100": return "1"
+	case "150": return "6"
+	case "180": return "2"
+	case "250": return "3"
+	case "300": return "4"
+	default: return "2" // Default 180
+	}
+}
+
+func getImxFormatId(s string) string {
+	switch s {
+	case "Fixed Width": return "1"
+	case "Fixed Height": return "4"
+	case "Proportional": return "2"
+	case "Square": return "3"
+	default: return "1" // Default Fixed Width
+	}
+}
+
 func uploadImx(fp string, job *JobRequest) (string, string, error) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
@@ -433,11 +455,36 @@ func uploadImx(fp string, job *JobRequest) (string, string, error) {
 			pw.CloseWithError(fmt.Errorf("failed to write format field: %w", err))
 			return
 		}
-		if err := writer.WriteField("thumbnail_size", job.Config["imx_thumb_id"]); err != nil {
+		
+		// Essential Hidden Fields from uploadpage.html for legacy script support
+		if err := writer.WriteField("adult", "1"); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write adult field: %w", err))
+			return
+		}
+		if err := writer.WriteField("upload_type", "file"); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write upload_type field: %w", err))
+			return
+		}
+		// "simple_upload" is often required for legacy scripts to respect parameters like thumb size
+		if err := writer.WriteField("simple_upload", "Upload"); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write simple_upload field: %w", err))
+			return
+		}
+		
+		// Map the config strings to IDs before sending to API
+		sizeId := getImxSizeId(job.Config["imx_thumb_id"])
+		
+		// Send both variations of the parameter name to cover all bases (API vs Form)
+		if err := writer.WriteField("thumbnail_size", sizeId); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to write thumbnail_size field: %w", err))
 			return
 		}
-		if err := writer.WriteField("thumbnail_format", job.Config["imx_format_id"]); err != nil {
+		if err := writer.WriteField("thumb_size_contaner", sizeId); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write thumb_size_contaner field: %w", err))
+			return
+		}
+
+		if err := writer.WriteField("thumbnail_format", getImxFormatId(job.Config["imx_format_id"])); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to write thumbnail_format field: %w", err))
 			return
 		}
@@ -483,25 +530,36 @@ func uploadImx(fp string, job *JobRequest) (string, string, error) {
 	}
 
 	// Scrape the actual BBCode from the image viewer page to get working thumbnail URLs
-	// The API returns incorrect/broken thumbnail URLs, but the web page has the correct ones
 	viewerURL := res.Data.Img
+	finalThumb := res.Data.Thumb
+
+	// Try scraping to find better URLs
 	if viewerURL != "" {
 		scrapedViewer, scrapedThumb, err := scrapeImxBBCode(viewerURL)
 		if err == nil && scrapedThumb != "" {
-			// Successfully scraped - use those URLs instead
-			return scrapedViewer, scrapedThumb, nil
+			log.WithFields(log.Fields{
+				"old_thumb": finalThumb,
+				"new_thumb": scrapedThumb,
+			}).Info("Replaced API thumb with Scraped thumb")
+			
+			// Update values with scraped results
+			viewerURL = scrapedViewer
+			finalThumb = scrapedThumb
+		} else {
+			log.WithFields(log.Fields{
+				"url":   viewerURL,
+				"error": err,
+			}).Warn("Failed to scrape IMX BBCode, using API response")
 		}
-		// Scraping failed - fall back to API response
-		log.WithFields(log.Fields{
-			"url":   viewerURL,
-			"error": err,
-		}).Warn("Failed to scrape IMX BBCode, using API response")
 	}
 
-	return res.Data.Img, res.Data.Thumb, nil
+	// REMOVED "Force Repair" logic that was breaking image.imx.to links.
+	// Relying on scraper results.
+
+	return viewerURL, finalThumb, nil
 }
 
-// scrapeImxBBCode fetches the IMX viewer page and extracts the BBCode thumbnail URL
+// scrapeImxBBCode fetches the IMX viewer page and intelligently extracts the correct BBCode
 func scrapeImxBBCode(viewerURL string) (string, string, error) {
 	resp, err := doRequest("GET", viewerURL, nil, "")
 	if err != nil {
@@ -514,30 +572,64 @@ func scrapeImxBBCode(viewerURL string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	// Look for BBCode in textarea or input elements
-	// IMX typically puts BBCode in a textarea with specific patterns
-	var bbcode string
+	var bestBBCode string
+	var bestScore int = -100
+
+	// Iterate all text inputs to find the best candidate for "Thumbnail BBCode"
 	doc.Find("textarea, input[type='text']").Each(func(i int, s *goquery.Selection) {
-		text := s.Text()
+		text := strings.TrimSpace(s.Text())
 		if text == "" {
 			text, _ = s.Attr("value")
 		}
-		// Look for BBCode pattern: [url=...][img]...[/img][/url]
-		if strings.Contains(text, "[url=") && strings.Contains(text, "[img]") && strings.Contains(text, "[/img]") {
-			bbcode = text
+		// Basic validation: must look like a BBCode link
+		if !strings.Contains(text, "[url=") || !strings.Contains(text, "[img]") {
+			return
+		}
+
+		// Calculate Score to identify the "Thumbnail" code vs "Full Image/Hotlink" code
+		score := 0
+
+		// 1. Check Label (Preceding text)
+		label := strings.ToLower(s.Prev().Text())
+		parentLabel := strings.ToLower(s.Parent().Prev().Text()) 
+		grandParentLabel := strings.ToLower(s.Parent().Parent().Prev().Text())
+		combinedLabel := label + " " + parentLabel + " " + grandParentLabel
+
+		if strings.Contains(combinedLabel, "thumb") {
+			score += 50 // Strong signal for thumbnail
+		} else if strings.Contains(combinedLabel, "hotlink") || strings.Contains(combinedLabel, "full") {
+			score -= 50 // Strong signal for full image (avoid)
+		}
+
+		// 2. Check URL Pattern inside the BBCode
+		// Thumbnails often have "/t/" or "_t" or "small" in the URL
+		if strings.Contains(text, "/u/t/") || strings.Contains(text, "_t") {
+			score += 100 // Very strong signal
+		} else if strings.Contains(text, "/u/i/") {
+			score -= 20 // Looks like full image
+		}
+
+		// 3. Position Preference
+		// If labels are missing, thumbnails usually appear before full hotlinks.
+		// We subtract 'i' so earlier elements get a slightly higher score if all else matches.
+		score -= i 
+
+		if score > bestScore {
+			bestScore = score
+			bestBBCode = text
 		}
 	})
 
-	if bbcode == "" {
-		return "", "", fmt.Errorf("no BBCode found on page")
+	if bestBBCode == "" {
+		return "", "", fmt.Errorf("no valid BBCode found on page")
 	}
 
 	// Parse BBCode to extract URLs
 	// Pattern: [url=VIEWER_URL][img]THUMB_URL[/img][/url]
 	reURL := regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
-	matches := reURL.FindStringSubmatch(bbcode)
+	matches := reURL.FindStringSubmatch(bestBBCode)
 	if len(matches) < 3 {
-		return "", "", fmt.Errorf("failed to parse BBCode: %s", bbcode)
+		return "", "", fmt.Errorf("failed to parse best BBCode candidate: %s", bestBBCode)
 	}
 
 	return matches[1], matches[2], nil
