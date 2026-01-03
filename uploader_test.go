@@ -406,7 +406,9 @@ func TestProcessFileNonexistent(t *testing.T) {
 func TestProcessFileUnsupportedService(t *testing.T) {
 	tmpDir := t.TempDir()
 	testImagePath := filepath.Join(tmpDir, "test.jpg")
-	createTestImage(testImagePath)
+	if err := createTestImage(testImagePath); err != nil {
+		t.Fatalf("Failed to create test image: %v", err)
+	}
 
 	job := JobRequest{
 		Action:  "upload",

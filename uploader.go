@@ -887,7 +887,7 @@ func uploadTurbo(fp string, job *JobRequest) (string, string, error) {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
 	raw, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -1003,7 +1003,7 @@ func scrapeImxGalleries(creds map[string]string) []map[string]string {
 
 	v := url.Values{"op": {"login"}, "login": {user}, "password": {pass}, "redirect": {"https://imx.to/user/galleries"}}
 	if r, err := doRequest("POST", "https://imx.to/login.html", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"); err == nil {
-		r.Body.Close()
+		_ = r.Body.Close()
 	}
 
 	resp, err := doRequest("GET", "https://imx.to/user/galleries", nil, "")
@@ -1064,7 +1064,7 @@ func createImxGallery(creds map[string]string, name string) (string, error) {
 func doViprLogin(creds map[string]string) bool {
 	v := url.Values{"op": {"login"}, "login": {creds["vipr_user"]}, "password": {creds["vipr_pass"]}}
 	if r, err := doRequest("POST", "https://vipr.im/login.html", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"); err == nil {
-		r.Body.Close()
+		_ = r.Body.Close()
 	}
 	resp, err := doRequest("GET", "https://vipr.im/", nil, "")
 	if err != nil {
@@ -1138,7 +1138,7 @@ func scrapeViprGalleries() []map[string]string {
 func createViprGallery(name string) (string, error) {
 	v := url.Values{"op": {"my_files"}, "add_folder": {name}}
 	if r, err := doRequest("GET", "https://vipr.im/?"+v.Encode(), nil, ""); err == nil {
-		r.Body.Close()
+		_ = r.Body.Close()
 	}
 	return "0", nil
 }
@@ -1153,7 +1153,7 @@ func doImageBamLogin(creds map[string]string) bool {
 	token := doc1.Find("input[name='_token']").AttrOr("value", "")
 	v := url.Values{"_token": {token}, "email": {creds["imagebam_user"]}, "password": {creds["imagebam_pass"]}, "remember": {"on"}}
 	if r, err := doRequest("POST", "https://www.imagebam.com/auth/login", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"); err == nil {
-		r.Body.Close()
+		_ = r.Body.Close()
 	}
 	resp2, _ := doRequest("GET", "https://www.imagebam.com/", nil, "")
 	defer resp2.Body.Close()
@@ -1193,7 +1193,7 @@ func doTurboLogin(creds map[string]string) bool {
 	if creds["turbo_user"] != "" {
 		v := url.Values{"username": {creds["turbo_user"]}, "password": {creds["turbo_pass"]}, "login": {"Login"}}
 		if r, err := doRequest("POST", "https://www.turboimagehost.com/login", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"); err == nil {
-			r.Body.Close()
+			_ = r.Body.Close()
 		}
 	}
 	resp, err := doRequest("GET", "https://www.turboimagehost.com/", nil, "")
@@ -1231,7 +1231,7 @@ func scrapeBBCode(urlStr string) (string, string, error) {
 func handleViperLogin(job JobRequest) {
 	user, pass := job.Creds["vg_user"], job.Creds["vg_pass"]
 	if r, err := doRequest("GET", "https://vipergirls.to/login.php?do=login", nil, ""); err == nil {
-		r.Body.Close()
+		_ = r.Body.Close()
 	}
 
 	// SECURITY NOTE: ViperGirls uses MD5 for authentication (legacy vBulletin system).
@@ -1242,7 +1242,7 @@ func handleViperLogin(job JobRequest) {
 	v := url.Values{"vb_login_username": {user}, "vb_login_md5password": {md5Pass}, "vb_login_md5password_utf": {md5Pass}, "cookieuser": {"1"}, "do": {"login"}, "securitytoken": {"guest"}}
 	resp, _ := doRequest("POST", "https://vipergirls.to/login.php?do=login", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded")
 	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	body := string(b)
 	if strings.Contains(body, "Thank you for logging in") {
 		if m := regexp.MustCompile(`SECURITYTOKEN\s*=\s*"([^"]+)"`).FindStringSubmatch(body); len(m) > 1 {
@@ -1265,7 +1265,7 @@ func handleViperPost(job JobRequest) {
 	if needsRefresh {
 		if resp, err := doRequest("GET", "https://vipergirls.to/forum.php", nil, ""); err == nil {
 			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if m := regexp.MustCompile(`SECURITYTOKEN\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b)); len(m) > 1 {
 				stateMutex.Lock()
 				vgSecurityToken = m[1]
