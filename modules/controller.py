@@ -287,4 +287,4 @@ class UploadController:
             if platform.system() == "Windows":
                 os.startfile(folder)
             else:
-                subprocess.call(["xdg-open", folder])
+                subprocess.run(["xdg-open", folder], check=False, shell=False)

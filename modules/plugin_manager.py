@@ -60,7 +60,7 @@ class PluginManager:
                 continue
 
             # Skip legacy backup files
-            if plugin_file.stem.endswith("_legacy") or plugin_file.stem.endswith("_v2"):
+            if plugin_file.stem.endswith("_legacy"):
                 logger.debug(f"Skipping legacy file: {plugin_file.stem}")
                 continue
 

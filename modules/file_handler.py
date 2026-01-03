@@ -2,6 +2,7 @@
 
 import os
 import io
+import re
 import base64
 from typing import List, Optional, Union
 from PIL import Image
@@ -78,3 +79,56 @@ def generate_thumbnail(file_path: str) -> Optional[Image.Image]:
             print(f"Thumbnail decode error for {file_path}: {e}")
             return None
     return None
+
+
+def sanitize_filename(filename: str, max_length: int = 200) -> str:
+    """Sanitize a filename to prevent security issues and filesystem errors.
+
+    Args:
+        filename: The filename to sanitize
+        max_length: Maximum allowed length for the filename
+
+    Returns:
+        A safe filename string
+
+    Note:
+        - Removes NUL bytes and control characters
+        - Removes path traversal sequences (.., ./)
+        - Replaces invalid filesystem characters with underscores
+        - Handles Windows reserved names (CON, PRN, AUX, etc.)
+        - Collapses multiple spaces/underscores
+        - Ensures result is not empty
+    """
+    # Remove NUL bytes and control characters
+    filename = "".join(c for c in filename if c >= " " and c != "\x00")
+
+    # Remove path traversal attempts
+    filename = filename.replace("..", "").replace("./", "").replace(".\\", "")
+
+    # Keep only safe characters: alphanumeric, spaces, hyphens, underscores
+    filename = "".join(c if (c.isalnum() or c in (" ", "_", "-")) else "_" for c in filename)
+
+    # Collapse multiple spaces and underscores
+    filename = re.sub(r"[ _]+", "_", filename)
+
+    # Remove leading/trailing underscores and spaces
+    filename = filename.strip("_ ")
+
+    # Handle Windows reserved names
+    reserved_names = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    }
+    if filename.upper() in reserved_names:
+        filename = f"file_{filename}"
+
+    # Ensure not empty
+    if not filename:
+        filename = "untitled"
+
+    # Truncate to max length
+    if len(filename) > max_length:
+        filename = filename[:max_length].rstrip("_ ")
+
+    return filename

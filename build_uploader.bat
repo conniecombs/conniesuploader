@@ -41,8 +41,11 @@ if "%ARCH%"=="64" (
     set "PYTHON_URL=https://www.python.org/ftp/python/3.11.7/python-3.11.7-amd64.exe"
     set "PYTHON_SHA256=6a26a06d0c1cf46cd5c17144c7c994d0f38ddab369c2299c28e06e1c3e34fa5c"
 ) else (
-    set "PYTHON_URL=https://www.python.org/ftp/python/3.11.7/python-3.11.7.exe"
-    set "PYTHON_SHA256=0bc2b84c8cc4e5c80bd8a33ec4d0e0e3c0c0a7f6c0e9f1c0e0e3c0c0a7f6c0e9"
+    echo [ERROR] 32-bit Windows is not supported for automatic installation.
+    echo        Please manually install Python 3.11.7 from https://www.python.org/downloads/
+    echo        Then re-run this build script.
+    pause
+    exit /b 1
 )
 
 curl -L -o "%~dp0python_installer.exe" "%PYTHON_URL%"

@@ -20,6 +20,7 @@ class SidecarBridge:
     def __init__(self):
         self.proc = None
         self.cmd_lock = threading.Lock()
+        self.restart_lock = threading.Lock()
         self.restart_count = 0
         self.max_restarts = 5  # Maximum restart attempts
         self.restart_delay = 2  # Initial restart delay (seconds)
@@ -135,23 +136,24 @@ class SidecarBridge:
             exit_code = self.proc.poll() if self.proc else None
             logger.error(f"Sidecar process crashed (exit code: {exit_code})")
 
-            # Try to restart with exponential backoff
-            if self.restart_count < self.max_restarts:
-                delay = self.restart_delay * (2 ** self.restart_count)
-                logger.info(f"Attempting to restart sidecar in {delay}s (attempt {self.restart_count + 1}/{self.max_restarts})")
-                time.sleep(delay)
+            # Try to restart with exponential backoff (protected by lock to prevent race conditions)
+            with self.restart_lock:
+                if self.restart_count < self.max_restarts:
+                    delay = self.restart_delay * (2 ** self.restart_count)
+                    logger.info(f"Attempting to restart sidecar in {delay}s (attempt {self.restart_count + 1}/{self.max_restarts})")
+                    time.sleep(delay)
 
-                self.restart_count += 1
-                self.proc = None  # Clear dead process
-                self._start_process()
+                    self.restart_count += 1
+                    self.proc = None  # Clear dead process
+                    self._start_process()
 
-                # Reset restart count on successful start
-                if self._is_process_alive():
-                    logger.info("Sidecar restarted successfully")
-                    self.restart_count = 0
-            else:
-                logger.critical(f"Sidecar failed to restart after {self.max_restarts} attempts - giving up")
-                self.proc = None
+                    # Reset restart count on successful start
+                    if self._is_process_alive():
+                        logger.info("Sidecar restarted successfully")
+                        self.restart_count = 0
+                else:
+                    logger.critical(f"Sidecar failed to restart after {self.max_restarts} attempts - giving up")
+                    self.proc = None
 
     def _dispatch_event(self, data):
         # 1. Log internal messages
