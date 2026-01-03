@@ -1,12 +1,13 @@
 # Remaining Codebase Issues - Technical Debt Tracker
 
 **Created**: 2026-01-03
-**Status**: Phase 1 ✅ Complete | Phase 2 ✅ Complete | Phase 3-4 📋 Planned
-**Total Remaining**: 35 issues
+**Last Updated**: 2026-01-03
+**Status**: Phase 1 ✅ Complete | Phase 2 ✅ Complete | Phase 3 🔄 In Progress
+**Total Remaining**: 34 issues (1 completed in Phase 3)
 
 ---
 
-## ✅ Completed (Phase 1 & 2)
+## ✅ Completed (Phases 1, 2, & 3)
 
 ### Phase 1 - Critical Fixes ✅
 - [x] Fix go.mod version format (go 1.24 not 1.24.11)
@@ -21,9 +22,15 @@
 - [x] Add custom exception classes (modules/exceptions.py)
 - [x] Improve input sanitization (sanitize_filename function)
 
+### Phase 3 - Testing & Code Cleanup ✅ (Partial)
+- [x] Add Go unit tests (12.5% coverage, 16 tests)
+- [x] Add Python test suite (26 tests passing)
+- [x] Run go mod tidy (dependency cleanup)
+- [x] Remove duplicate legacy code (451 lines archived)
+
 ---
 
-## 🔴 High Priority Issues (8 remaining)
+## 🔴 High Priority Issues (7 remaining, 1 completed)
 
 ### Testing & Quality Assurance
 
@@ -63,19 +70,20 @@
   - [ ] Move business logic to controller
 - **Estimated Effort**: Large (3-5 days)
 
-#### **Issue #4: Duplicate Legacy Code**
-- **Files**:
-  - `pixhost_legacy.py` (1,200 lines)
-  - `imx_legacy.py` (800 lines)
-  - `turbo_legacy.py` (900 lines)
-  - `vipr_legacy.py` (600 lines)
-- **Total**: ~3,500 lines of unused code
+#### **Issue #4: Duplicate Legacy Code** ✅ **COMPLETED**
+- **Files Archived** (2026-01-03):
+  - `pixhost_legacy.py` (103 lines) → `archive/legacy_plugins/`
+  - `imx_legacy.py` (74 lines) → `archive/legacy_plugins/`
+  - `turbo_legacy.py` (103 lines) → `archive/legacy_plugins/`
+  - `vipr_legacy.py` (79 lines) → `archive/legacy_plugins/`
+  - `imagebam_legacy.py` (92 lines) → `archive/legacy_plugins/`
+- **Total**: 451 lines removed from active codebase
 - **Action Items**:
-  - [ ] Verify no references to legacy files
-  - [ ] Archive to `archive/` directory
-  - [ ] Update git history (optional)
-  - [ ] Document migration in README
-- **Estimated Effort**: Small (1 day)
+  - [x] Verify no references to legacy files ✅
+  - [x] Archive to `archive/` directory ✅
+  - [x] Preserve git history via `git mv` ✅
+  - [x] Document migration in archive/README.md ✅
+- **Actual Effort**: 0.5 days
 
 ### Architecture & Design
 
