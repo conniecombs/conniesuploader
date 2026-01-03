@@ -96,7 +96,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # FIX: Removed --clean from pyi-makespec as it is unsupported
+    # FIX: REMOVED --clean from this step
     - name: Create PyInstaller Spec
       run: |
         pyi-makespec --noconsole --onefile --name "ConniesUploader" `
