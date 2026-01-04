@@ -161,6 +161,11 @@ class SidecarBridge:
             # DIAGNOSTIC: Show Go logs as INFO so they're visible in console
             logger.info(f"[GO] {data.get('msg')}")
 
+        # DIAGNOSTIC: Log ALL events to see what's being sent
+        event_type = data.get("type")
+        if event_type in ["status", "result", "error"]:
+            logger.info(f"[GO-EVENT] type={event_type}, file={data.get('file', 'N/A')}, status={data.get('status', 'N/A')}, url={data.get('url', 'N/A')[:50] if data.get('url') else 'N/A'}")
+
         # 2. Broadcast to all listeners
         with self.listeners_lock:
             for q in self.listeners:
