@@ -245,7 +245,7 @@ func handleGenerateThumb(job JobRequest) {
 		sendJSON(OutputEvent{Type: "error", Msg: "File not found"})
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	img, _, err := image.Decode(f)
 	if err != nil {
@@ -518,8 +518,8 @@ func uploadImx(ctx context.Context, fp string, job *JobRequest) (string, string,
 	writer := multipart.NewWriter(pw)
 
 	go func() {
-		defer pw.Close()
-		defer writer.Close()
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
 		part, err := writer.CreateFormFile("image", filepath.Base(fp))
 		if err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to create form file: %w", err))
@@ -530,7 +530,7 @@ func uploadImx(ctx context.Context, fp string, job *JobRequest) (string, string,
 			pw.CloseWithError(fmt.Errorf("failed to open file: %w", err))
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := io.Copy(part, f); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to copy file: %w", err))
 			return
@@ -593,7 +593,7 @@ func uploadImx(ctx context.Context, fp string, job *JobRequest) (string, string,
 	if err != nil {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read response: %w", err)
@@ -650,7 +650,7 @@ func scrapeImxBBCode(viewerURL string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("failed to fetch viewer page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
@@ -658,7 +658,7 @@ func scrapeImxBBCode(viewerURL string) (string, string, error) {
 	}
 
 	var bestBBCode string
-	var bestScore int = -100
+	var bestScore = -100
 
 	// Iterate all text inputs to find the best candidate for "Thumbnail BBCode"
 	doc.Find("textarea, input[type='text']").Each(func(i int, s *goquery.Selection) {
@@ -725,8 +725,8 @@ func uploadPixhost(ctx context.Context, fp string, job *JobRequest) (string, str
 	writer := multipart.NewWriter(pw)
 
 	go func() {
-		defer pw.Close()
-		defer writer.Close()
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
 		part, err := writer.CreateFormFile("img", filepath.Base(fp))
 		if err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to create form file: %w", err))
@@ -737,7 +737,7 @@ func uploadPixhost(ctx context.Context, fp string, job *JobRequest) (string, str
 			pw.CloseWithError(fmt.Errorf("failed to open file: %w", err))
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := io.Copy(part, f); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to copy file: %w", err))
 			return
@@ -770,7 +770,7 @@ func uploadPixhost(ctx context.Context, fp string, job *JobRequest) (string, str
 	if err != nil {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read response: %w", err)
@@ -812,8 +812,8 @@ func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
-		defer pw.Close()
-		defer writer.Close()
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
 		safeName := strings.ReplaceAll(filepath.Base(fp), " ", "_")
 		part, err := writer.CreateFormFile("file_0", safeName)
 		if err != nil {
@@ -825,7 +825,7 @@ func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string
 			pw.CloseWithError(fmt.Errorf("failed to open file: %w", err))
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := io.Copy(part, f); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to copy file: %w", err))
 			return
@@ -861,7 +861,7 @@ func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string
 	if err != nil {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Parse initial response
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
@@ -873,7 +873,7 @@ func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string
 		fnVal := textArea.Text()
 		v := url.Values{"op": {"upload_result"}, "fn": {fnVal}, "st": {"OK"}}
 		if r2, e2 := doRequest(ctx, "POST", "https://vipr.im/", strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"); e2 == nil {
-			defer r2.Body.Close()
+			defer func() { _ = r2.Body.Close() }()
 			doc, _ = goquery.NewDocumentFromReader(r2.Body)
 		}
 	}
@@ -926,8 +926,8 @@ func uploadTurbo(ctx context.Context, fp string, job *JobRequest) (string, strin
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
-		defer pw.Close()
-		defer writer.Close()
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
 		h := make(textproto.MIMEHeader)
 		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="qqfile"; filename="%s"`, quoteEscape(filepath.Base(fp))))
 		h.Set("Content-Type", "application/octet-stream")
@@ -941,7 +941,7 @@ func uploadTurbo(ctx context.Context, fp string, job *JobRequest) (string, strin
 			pw.CloseWithError(fmt.Errorf("failed to open file: %w", err))
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := io.Copy(part, f); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to copy file: %w", err))
 			return
@@ -1016,8 +1016,8 @@ func uploadImageBam(ctx context.Context, fp string, job *JobRequest) (string, st
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
-		defer pw.Close()
-		defer writer.Close()
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
 		part, err := writer.CreateFormFile("files[0]", filepath.Base(fp))
 		if err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to create form file: %w", err))
@@ -1028,7 +1028,7 @@ func uploadImageBam(ctx context.Context, fp string, job *JobRequest) (string, st
 			pw.CloseWithError(fmt.Errorf("failed to open file: %w", err))
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := io.Copy(part, f); err != nil {
 			pw.CloseWithError(fmt.Errorf("failed to copy file: %w", err))
 			return
@@ -1058,7 +1058,7 @@ func uploadImageBam(ctx context.Context, fp string, job *JobRequest) (string, st
 	if err != nil {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var res struct {
 		Status string `json:"status"`
@@ -1097,7 +1097,7 @@ func scrapeImxGalleries(creds map[string]string) []map[string]string {
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
@@ -1138,7 +1138,7 @@ func createImxGallery(creds map[string]string, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	finalUrl := resp.Request.URL.String()
 	if strings.Contains(finalUrl, "id=") {
 		u, _ := url.Parse(finalUrl)
@@ -1157,7 +1157,7 @@ func doViprLogin(creds map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	doc, _ := goquery.NewDocumentFromReader(bytes.NewReader(bodyBytes))
 
@@ -1189,7 +1189,7 @@ func scrapeViprGalleries() []map[string]string {
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	var results []map[string]string
 	seen := make(map[string]bool)
@@ -1235,7 +1235,7 @@ func doImageBamLogin(creds map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 	doc1, _ := goquery.NewDocumentFromReader(resp1.Body)
 	token := doc1.Find("input[name='_token']").AttrOr("value", "")
 	v := url.Values{"_token": {token}, "email": {creds["imagebam_user"]}, "password": {creds["imagebam_pass"]}, "remember": {"on"}}
@@ -1243,7 +1243,7 @@ func doImageBamLogin(creds map[string]string) bool {
 		_ = r.Body.Close()
 	}
 	resp2, _ := doRequest(context.Background(), "GET", "https://www.imagebam.com/", nil, "")
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	doc2, _ := goquery.NewDocumentFromReader(resp2.Body)
 
 	stateMutex.Lock()
@@ -1264,7 +1264,7 @@ func doImageBamLogin(creds map[string]string) bool {
 		req.Header.Set("X-CSRF-TOKEN", ibCsrf)
 		req.Header.Set("User-Agent", UserAgent)
 		if r3, e3 := client.Do(req); e3 == nil {
-			defer r3.Body.Close()
+			defer func() { _ = r3.Body.Close() }()
 			var j struct{ Status, Data string }
 			if err := json.NewDecoder(r3.Body).Decode(&j); err == nil {
 				if j.Status == "success" {
@@ -1287,7 +1287,7 @@ func doTurboLogin(creds map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	html := string(b)
 
@@ -1305,7 +1305,7 @@ func scrapeBBCode(urlStr string) (string, string, error) {
 	if err != nil {
 		return urlStr, urlStr, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	html := string(b)
 	re := regexp.MustCompile(`(?i)\[url=["']?(https?://[^"']+)["']?\]\s*\[img\](https?://[^\[]+)\[/img\]\s*\[/url\]`)
@@ -1371,7 +1371,7 @@ func handleViperPost(job JobRequest) {
 		sendJSON(OutputEvent{Type: "result", Status: "failed", Msg: err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	body := string(b)
 	finalUrl := resp.Request.URL.String()

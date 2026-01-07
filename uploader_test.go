@@ -222,7 +222,7 @@ func TestDoRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doRequest failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Status code = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -248,7 +248,7 @@ func TestDoRequestWithTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doRequest unexpectedly failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Status code = %d, want %d", resp.StatusCode, http.StatusOK)
