@@ -12,6 +12,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/disintegration/imaging"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 	"image"
 	"image/jpeg"
 	_ "image/png"
@@ -55,6 +56,48 @@ type JobRequest struct {
 	Creds       map[string]string `json:"creds"`
 	Config      map[string]string `json:"config"`
 	ContextData map[string]string `json:"context_data"`
+	HttpSpec    *HttpRequestSpec  `json:"http_spec,omitempty"` // New generic HTTP runner
+}
+
+// HttpRequestSpec defines a generic HTTP request for plugin-driven uploads
+type HttpRequestSpec struct {
+	URL             string                       `json:"url"`
+	Method          string                       `json:"method"`
+	Headers         map[string]string            `json:"headers"`
+	MultipartFields map[string]MultipartField    `json:"multipart_fields"`
+	FormFields      map[string]string            `json:"form_fields,omitempty"`
+	ResponseParser  ResponseParserSpec           `json:"response_parser"`
+	PreRequest      *PreRequestSpec              `json:"pre_request,omitempty"` // NEW: Phase 3 session support
+}
+
+// PreRequestSpec defines a pre-request hook for login/session setup
+type PreRequestSpec struct {
+	Action         string            `json:"action"`          // "login", "get_endpoint", etc.
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	FormFields     map[string]string `json:"form_fields,omitempty"`
+	UseCookies     bool              `json:"use_cookies"`     // Store cookies for main request
+	ExtractFields  map[string]string `json:"extract_fields"`  // Extract values from response (name -> JSONPath/selector)
+	ResponseType   string            `json:"response_type"`   // "json" or "html"
+	FollowUpRequest *PreRequestSpec  `json:"follow_up_request,omitempty"` // NEW: Chain multiple pre-requests
+}
+
+// MultipartField represents a field in multipart/form-data
+type MultipartField struct {
+	Type  string `json:"type"`  // "file", "text", or "dynamic"
+	Value string `json:"value"` // For text: the value; For file: file path; For dynamic: reference to extracted field
+}
+
+// ResponseParserSpec defines how to parse the upload response
+type ResponseParserSpec struct {
+	Type         string `json:"type"`          // "json" or "html"
+	URLPath      string `json:"url_path"`      // JSONPath or CSS selector for image URL
+	ThumbPath    string `json:"thumb_path"`    // JSONPath or CSS selector for thumbnail URL
+	StatusPath   string `json:"status_path"`   // JSONPath for status field
+	SuccessValue string `json:"success_value"` // Expected value for success
+	URLTemplate  string `json:"url_template,omitempty"`   // Template for constructing URL from extracted values (e.g., "https://example.com/p/{id}/image.html")
+	ThumbTemplate string `json:"thumb_template,omitempty"` // Template for constructing thumbnail URL
 }
 
 type OutputEvent struct {
@@ -69,20 +112,82 @@ type OutputEvent struct {
 
 // --- Globals ---
 var outputMutex sync.Mutex
-var stateMutex sync.Mutex // Protects service state globals
 var client *http.Client
 
-// Service State (protected by stateMutex)
-var viprEndpoint string
-var viprSessId string
-var turboEndpoint string
-var ibCsrf string
-var ibUploadToken string
-var vgSecurityToken string
+// Rate Limiters (prevent IP bans by throttling requests per service)
+// Each service gets 2 requests/second with burst of 5 (reasonable for image hosts)
+var rateLimiters = map[string]*rate.Limiter{
+	"imx.to":          rate.NewLimiter(rate.Limit(2.0), 5),
+	"pixhost.to":      rate.NewLimiter(rate.Limit(2.0), 5),
+	"vipr.im":         rate.NewLimiter(rate.Limit(2.0), 5),
+	"turboimagehost":  rate.NewLimiter(rate.Limit(2.0), 5),
+	"imagebam.com":    rate.NewLimiter(rate.Limit(2.0), 5),
+	"vipergirls.to":   rate.NewLimiter(rate.Limit(1.0), 3), // More conservative for forums
+}
+var rateLimiterMutex sync.RWMutex
+
+// Per-Service State Structs (reduces lock contention vs single global mutex)
+type viprState struct {
+	mu       sync.RWMutex
+	endpoint string
+	sessId   string
+}
+
+type turboState struct {
+	mu       sync.RWMutex
+	endpoint string
+}
+
+type imageBamState struct {
+	mu          sync.RWMutex
+	csrf        string
+	uploadToken string
+}
+
+type viperGirlsState struct {
+	mu            sync.RWMutex
+	securityToken string
+}
+
+var viprSt = &viprState{}
+var turboSt = &turboState{}
+var ibSt = &imageBamState{}
+var vgSt = &viperGirlsState{}
 
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 func quoteEscape(s string) string { return quoteEscaper.Replace(s) }
+
+// getRateLimiter returns the rate limiter for a given service
+// Creates a default limiter if service not found
+func getRateLimiter(service string) *rate.Limiter {
+	rateLimiterMutex.RLock()
+	limiter, exists := rateLimiters[service]
+	rateLimiterMutex.RUnlock()
+
+	if !exists {
+		// Create default limiter for unknown services (2 req/s, burst 5)
+		limiter = rate.NewLimiter(rate.Limit(2.0), 5)
+		rateLimiterMutex.Lock()
+		rateLimiters[service] = limiter
+		rateLimiterMutex.Unlock()
+	}
+
+	return limiter
+}
+
+// waitForRateLimit waits for rate limiter approval before proceeding
+// Returns error if context is cancelled while waiting
+func waitForRateLimit(ctx context.Context, service string) error {
+	limiter := getRateLimiter(service)
+
+	// Wait for permission to proceed (respects context cancellation)
+	if err := limiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limit wait cancelled: %w", err)
+	}
+
+	return nil
+}
 
 const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -111,19 +216,21 @@ func main() {
 	// DIAGNOSTIC: Send visible startup message as JSON event (goes to Python console)
 	sendJSON(OutputEvent{
 		Type: "log",
-		Msg:  "=== GO SIDECAR STARTED - DIAGNOSTIC VERSION 2.0.0 - 10 SECOND TIMEOUT ===",
+		Msg:  "=== GO SIDECAR STARTED - VERSION 2.1.0 - FIXED TIMEOUTS (180s/60s) ===",
 	})
 
 	jar, _ := cookiejar.New(nil)
-	// CRITICAL FIX: Reduce timeout from 120s to 15s to prevent hangs
-	// Combined with 10s context timeout, this ensures no request blocks forever
+	// TIMEOUT FIX: Increase timeouts to support large file uploads
+	// - Client timeout: 180s (3 minutes) for the entire request/response cycle
+	// - ResponseHeaderTimeout: 60s to allow servers time to process large uploads before responding
+	// This prevents premature timeouts on large files or slow connections
 	client = &http.Client{
-		Timeout:   15 * time.Second,
+		Timeout:   180 * time.Second,
 		Jar:       jar,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost:   10,
-			ResponseHeaderTimeout: 10 * time.Second,
-			DisableKeepAlives:     true, // Prevent connection reuse issues
+			ResponseHeaderTimeout: 60 * time.Second,
+			DisableKeepAlives:     false, // Allow connection reuse for efficiency
 		},
 	}
 
@@ -200,6 +307,9 @@ func handleJob(job JobRequest) {
 	switch job.Action {
 	case "upload":
 		handleUpload(job)
+	case "http_upload":
+		// NEW: Generic HTTP runner for plugin-driven uploads
+		handleHttpUpload(job)
 	case "login", "verify":
 		handleLoginVerify(job)
 	case "list_galleries":
@@ -305,17 +415,17 @@ func handleListGalleries(job JobRequest) {
 	var galleries []map[string]string
 	switch job.Service {
 	case "vipr.im":
-		stateMutex.Lock()
-		needsLogin := viprSessId == ""
-		stateMutex.Unlock()
+		viprSt.mu.RLock()
+		needsLogin := viprSt.sessId == ""
+		viprSt.mu.RUnlock()
 		if needsLogin {
 			doViprLogin(job.Creds)
 		}
 		galleries = scrapeViprGalleries()
 	case "imagebam.com":
-		stateMutex.Lock()
-		needsLogin := ibCsrf == ""
-		stateMutex.Unlock()
+		ibSt.mu.RLock()
+		needsLogin := ibSt.csrf == ""
+		ibSt.mu.RUnlock()
 		if needsLogin {
 			doImageBamLogin(job.Creds)
 		}
@@ -346,6 +456,40 @@ func handleCreateGallery(job JobRequest) {
 	} else {
 		sendJSON(OutputEvent{Type: "result", Status: "success", Msg: id, Data: id})
 	}
+}
+
+func handleHttpUpload(job JobRequest) {
+	// NEW: Generic HTTP runner for plugin-driven uploads
+	// Python plugins send fully-formed HTTP request specs; Go just executes them
+	if job.HttpSpec == nil {
+		sendJSON(OutputEvent{Type: "error", Msg: "http_upload requires http_spec field"})
+		return
+	}
+
+	var wg sync.WaitGroup
+	filesChan := make(chan string, len(job.Files))
+
+	maxWorkers := 2
+	if w, err := strconv.Atoi(job.Config["threads"]); err == nil && w > 0 {
+		maxWorkers = w
+	}
+
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for fp := range filesChan {
+				processFileGeneric(fp, &job)
+			}
+		}()
+	}
+
+	for _, f := range job.Files {
+		filesChan <- f
+	}
+	close(filesChan)
+	wg.Wait()
+	sendJSON(OutputEvent{Type: "batch_complete", Status: "done"})
 }
 
 func handleUpload(job JobRequest) {
@@ -386,13 +530,14 @@ func processFile(fp string, job *JobRequest) {
 	sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Processing"})
 	logger.Info("=== PROCESSFILE CALLED ===")
 
-	// CRITICAL FIX #2: 2-minute timeout per file
-	// Allows time for large uploads on slower connections
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// TIMEOUT FIX: 3-minute timeout per file to match documentation
+	// Allows time for large uploads (10-50MB) on typical connections
+	// Combined with client timeouts (180s/60s), this prevents premature failures
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> 2-minute timeout started for %s", filepath.Base(fp))})
-	logger.WithField("timeout", "120s").Debug("Context created with timeout")
+	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> 3-minute timeout started for %s", filepath.Base(fp))})
+	logger.WithField("timeout", "180s").Debug("Context created with timeout")
 
 	type result struct {
 		url   string
@@ -480,13 +625,687 @@ func processFile(fp string, job *JobRequest) {
 		}
 	case <-ctx.Done():
 		// TIMEOUT - context cancelled, goroutine should exit
-		logger.Error("=== TIMEOUT TRIGGERED - 10 SECONDS ELAPSED ===")
-		sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf("!!! TIMEOUT TRIGGERED for %s after 10 seconds !!!", filepath.Base(fp))})
+		logger.Error("=== TIMEOUT TRIGGERED - 3 MINUTES ELAPSED ===")
+		sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf("!!! TIMEOUT TRIGGERED for %s after 3 minutes !!!", filepath.Base(fp))})
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Timeout"})
-		sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: "Upload timed out after 10 seconds - worker released"})
+		sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: "Upload timed out after 3 minutes - worker released"})
 	}
 	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> PROCESSFILE EXITING for %s", filepath.Base(fp))})
 	logger.Debug("=== PROCESSFILE EXITING ===")
+}
+
+// processFileGeneric handles file uploads using the generic HTTP runner
+// This allows Python plugins to define the entire HTTP request
+func processFileGeneric(fp string, job *JobRequest) {
+	logger := log.WithFields(log.Fields{
+		"file":    filepath.Base(fp),
+		"service": job.Service,
+	})
+
+	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> GENERIC UPLOAD for %s (service: %s)", filepath.Base(fp), job.Service)})
+	sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Processing"})
+	logger.Info("=== GENERIC PROCESSFILE CALLED ===")
+
+	// Same timeout as legacy processFile
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> 3-minute timeout started for %s", filepath.Base(fp))})
+	logger.WithField("timeout", "180s").Debug("Context created with timeout")
+
+	type result struct {
+		url   string
+		thumb string
+		err   error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
+		logger.Debug("Status 'Uploading' sent")
+
+		// Execute the generic HTTP request
+		url, thumb, err := executeHttpUpload(ctx, fp, job)
+
+		logger.WithFields(log.Fields{
+			"url":   url,
+			"thumb": thumb,
+			"error": err,
+		}).Debug("Generic upload returned")
+
+		select {
+		case resultChan <- result{url: url, thumb: thumb, err: err}:
+			logger.Debug("Result sent to channel")
+		case <-ctx.Done():
+			logger.Warn("Context cancelled before result could be sent")
+		}
+	}()
+
+	// Wait for upload to complete or timeout
+	logger.Debug("Waiting for result or timeout")
+	select {
+	case res := <-resultChan:
+		logger.WithField("has_error", res.err != nil).Debug("=== RESULT RECEIVED ===")
+		if res.err != nil {
+			logger.WithFields(log.Fields{
+				"error": res.err.Error(),
+			}).Error("Upload failed")
+			sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Failed"})
+			sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: fmt.Sprintf("Upload failed: %v", res.err)})
+		} else {
+			logger.WithFields(log.Fields{
+				"url":   res.url,
+				"thumb": res.thumb,
+			}).Info("Upload successful")
+			sendJSON(OutputEvent{Type: "result", FilePath: fp, Url: res.url, Thumb: res.thumb})
+			sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Done"})
+		}
+	case <-ctx.Done():
+		logger.Error("=== TIMEOUT TRIGGERED - 3 MINUTES ELAPSED ===")
+		sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf("!!! TIMEOUT TRIGGERED for %s after 3 minutes !!!", filepath.Base(fp))})
+		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Timeout"})
+		sendJSON(OutputEvent{Type: "error", FilePath: fp, Msg: "Upload timed out after 3 minutes - worker released"})
+	}
+	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> GENERIC PROCESSFILE EXITING for %s", filepath.Base(fp))})
+	logger.Debug("=== GENERIC PROCESSFILE EXITING ===")
+}
+
+// executeHttpUpload performs a generic HTTP upload based on Python-provided spec
+func executeHttpUpload(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
+	spec := job.HttpSpec
+	if spec == nil {
+		return "", "", fmt.Errorf("no http_spec provided")
+	}
+
+	// Apply rate limiting if service is specified
+	if job.Service != "" {
+		if err := waitForRateLimit(ctx, job.Service); err != nil {
+			return "", "", fmt.Errorf("rate limit: %w", err)
+		}
+	}
+
+	// NEW: Execute pre-request if specified (login, get endpoint, etc.)
+	extractedValues := make(map[string]string)
+	var sessionClient *http.Client
+
+	if spec.PreRequest != nil {
+		values, preClient, err := executePreRequest(ctx, spec.PreRequest, job.Service)
+		if err != nil {
+			return "", "", fmt.Errorf("pre-request failed: %w", err)
+		}
+		extractedValues = values
+
+		// Use session client with cookies if pre-request requested it
+		if spec.PreRequest.UseCookies {
+			sessionClient = preClient
+		}
+	}
+
+	// Build multipart request
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		defer func() { _ = pw.Close() }()
+		defer func() { _ = writer.Close() }()
+
+		// Process all multipart fields from the spec
+		for fieldName, field := range spec.MultipartFields {
+			if field.Type == "file" {
+				// File field - use the file from the job
+				filePath := fp // Use the file being processed, not field.Value
+				part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
+				if err != nil {
+					pw.CloseWithError(fmt.Errorf("failed to create form file %s: %w", fieldName, err))
+					return
+				}
+				f, err := os.Open(filePath)
+				if err != nil {
+					pw.CloseWithError(fmt.Errorf("failed to open file %s: %w", filePath, err))
+					return
+				}
+				defer func() { _ = f.Close() }()
+				if _, err := io.Copy(part, f); err != nil {
+					pw.CloseWithError(fmt.Errorf("failed to copy file %s: %w", filePath, err))
+					return
+				}
+			} else if field.Type == "text" {
+				// Text field
+				if err := writer.WriteField(fieldName, field.Value); err != nil {
+					pw.CloseWithError(fmt.Errorf("failed to write field %s: %w", fieldName, err))
+					return
+				}
+			} else if field.Type == "dynamic" {
+				// NEW: Dynamic field - resolve from extracted values
+				value, exists := extractedValues[field.Value]
+				if !exists {
+					pw.CloseWithError(fmt.Errorf("dynamic field %s references unknown extracted value: %s", fieldName, field.Value))
+					return
+				}
+				if err := writer.WriteField(fieldName, value); err != nil {
+					pw.CloseWithError(fmt.Errorf("failed to write dynamic field %s: %w", fieldName, err))
+					return
+				}
+			}
+		}
+	}()
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, spec.Method, spec.URL, pr)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers from spec
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("User-Agent", UserAgent) // Default user agent
+	for key, value := range spec.Headers {
+		req.Header.Set(key, value)
+	}
+
+	// Execute request (use session client if available, otherwise default)
+	var resp *http.Response
+	if sessionClient != nil {
+		resp, err = sessionClient.Do(req)
+	} else {
+		resp, err = client.Do(req)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Parse response based on parser spec
+	return parseHttpResponse(resp, &spec.ResponseParser, fp)
+}
+
+// executePreRequest executes a pre-request hook (login, endpoint discovery, etc.)
+// Returns extracted values and optionally a client with session cookies
+func executePreRequest(ctx context.Context, spec *PreRequestSpec, service string) (map[string]string, *http.Client, error) {
+	log.WithFields(log.Fields{
+		"action":  spec.Action,
+		"url":     spec.URL,
+		"service": service,
+	}).Debug("Executing pre-request")
+
+	// Create client with optional cookie jar
+	var preClient *http.Client
+	if spec.UseCookies {
+		jar, _ := cookiejar.New(nil)
+		preClient = &http.Client{
+			Timeout: 60 * time.Second,
+			Jar:     jar,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost:   10,
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		}
+	} else {
+		preClient = client // Use default client
+	}
+
+	// Build request body (support template substitution in form fields)
+	var reqBody io.Reader
+	contentType := ""
+
+	if len(spec.FormFields) > 0 {
+		formData := url.Values{}
+		for key, value := range spec.FormFields {
+			// Support template substitution: {field_name} -> extracted value
+			// This is needed for multi-step flows like ImageBam where later steps need earlier extracted values
+			// Note: extractedValues would need to be passed in, but we don't have them yet on first call
+			// For now, this is handled in follow-up requests which have access to parent extracted values
+			formData.Set(key, value)
+		}
+		reqBody = strings.NewReader(formData.Encode())
+		contentType = "application/x-www-form-urlencoded"
+	}
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, spec.Method, spec.URL, reqBody)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create pre-request: %w", err)
+	}
+
+	// Set headers (no template substitution needed on first request)
+	req.Header.Set("User-Agent", UserAgent)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for key, value := range spec.Headers {
+		req.Header.Set(key, value)
+	}
+
+	// Execute request
+	resp, err := preClient.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pre-request execution failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read pre-request response: %w", err)
+	}
+
+	// Extract values based on response type
+	extractedValues := make(map[string]string)
+
+	if spec.ResponseType == "json" {
+		var data map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			return nil, nil, fmt.Errorf("failed to parse JSON pre-request response: %w", err)
+		}
+
+		for fieldName, jsonPath := range spec.ExtractFields {
+			value := getJSONValue(data, jsonPath)
+			extractedValues[fieldName] = value
+			log.WithFields(log.Fields{
+				"field": fieldName,
+				"value": value,
+				"path":  jsonPath,
+			}).Debug("Extracted value from JSON")
+		}
+	} else if spec.ResponseType == "html" {
+		doc, err := goquery.NewDocumentFromReader(bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse HTML pre-request response: %w", err)
+		}
+
+		for fieldName, selector := range spec.ExtractFields {
+			var value string
+
+			// Support regex extraction if selector starts with "regex:"
+			if strings.HasPrefix(selector, "regex:") {
+				pattern := strings.TrimPrefix(selector, "regex:")
+				re := regexp.MustCompile(pattern)
+				matches := re.FindStringSubmatch(string(bodyBytes))
+				if len(matches) > 1 {
+					value = matches[1] // First capture group
+				}
+				log.WithFields(log.Fields{
+					"field":   fieldName,
+					"value":   value,
+					"pattern": pattern,
+				}).Debug("Extracted value from HTML using regex")
+			} else {
+				// CSS selector extraction
+				value = doc.Find(selector).AttrOr("value", "")
+				if value == "" {
+					value = doc.Find(selector).AttrOr("action", "")
+				}
+				if value == "" {
+					value = doc.Find(selector).Text()
+				}
+				log.WithFields(log.Fields{
+					"field":    fieldName,
+					"value":    value,
+					"selector": selector,
+				}).Debug("Extracted value from HTML using CSS selector")
+			}
+
+			extractedValues[fieldName] = strings.TrimSpace(value)
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"extracted_count": len(extractedValues),
+		"has_cookies":     spec.UseCookies,
+	}).Debug("Pre-request completed")
+
+	// NEW: Execute follow-up request if specified (for multi-step logins like Vipr)
+	if spec.FollowUpRequest != nil {
+		log.Debug("Executing follow-up pre-request")
+
+		// Execute follow-up using same client (preserves cookies) and parent extracted values
+		followUpValues, followUpClient, err := executeFollowUpRequest(ctx, spec.FollowUpRequest, service, preClient, extractedValues)
+		if err != nil {
+			return nil, nil, fmt.Errorf("follow-up request failed: %w", err)
+		}
+
+		// Merge extracted values (follow-up values override initial values)
+		for k, v := range followUpValues {
+			extractedValues[k] = v
+		}
+
+		// Use follow-up client if it has cookies, otherwise keep original
+		if spec.FollowUpRequest.UseCookies && followUpClient != nil {
+			preClient = followUpClient
+		}
+	}
+
+	return extractedValues, preClient, nil
+}
+
+// executeFollowUpRequest handles follow-up pre-requests using an existing client and parent extracted values
+func executeFollowUpRequest(ctx context.Context, spec *PreRequestSpec, service string, existingClient *http.Client, parentExtractedValues map[string]string) (map[string]string, *http.Client, error) {
+	log.WithFields(log.Fields{
+		"action":  spec.Action,
+		"url":     spec.URL,
+		"service": service,
+	}).Debug("Executing follow-up pre-request")
+
+	// Use existing client to preserve cookies, or create new one
+	reqClient := existingClient
+	if reqClient == nil {
+		if spec.UseCookies {
+			jar, _ := cookiejar.New(nil)
+			reqClient = &http.Client{
+				Timeout: 60 * time.Second,
+				Jar:     jar,
+				Transport: &http.Transport{
+					MaxIdleConnsPerHost:   10,
+					ResponseHeaderTimeout: 30 * time.Second,
+				},
+			}
+		} else {
+			reqClient = client
+		}
+	}
+
+	// Build request body with template substitution from parent extracted values
+	var reqBody io.Reader
+	contentType := ""
+
+	if len(spec.FormFields) > 0 {
+		formData := url.Values{}
+		for key, value := range spec.FormFields {
+			// Support template substitution: {field_name} -> extracted value from parent
+			substitutedValue := substituteTemplateFromMap(value, parentExtractedValues)
+			formData.Set(key, substitutedValue)
+		}
+		reqBody = strings.NewReader(formData.Encode())
+		contentType = "application/x-www-form-urlencoded"
+	}
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, spec.Method, spec.URL, reqBody)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create follow-up request: %w", err)
+	}
+
+	// Set headers with template substitution from parent extracted values
+	req.Header.Set("User-Agent", UserAgent)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for key, value := range spec.Headers {
+		// Support template substitution in headers (e.g., "X-CSRF-TOKEN": "{csrf_token}")
+		substitutedValue := substituteTemplateFromMap(value, parentExtractedValues)
+		req.Header.Set(key, substitutedValue)
+	}
+
+	// Execute request
+	resp, err := reqClient.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("follow-up request execution failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read follow-up response: %w", err)
+	}
+
+	// Extract values based on response type
+	extractedValues := make(map[string]string)
+
+	if spec.ResponseType == "json" {
+		var data map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			return nil, nil, fmt.Errorf("failed to parse JSON follow-up response: %w", err)
+		}
+
+		for fieldName, jsonPath := range spec.ExtractFields {
+			value := getJSONValue(data, jsonPath)
+			extractedValues[fieldName] = value
+			log.WithFields(log.Fields{
+				"field": fieldName,
+				"value": value,
+				"path":  jsonPath,
+			}).Debug("Extracted value from JSON (follow-up)")
+		}
+	} else if spec.ResponseType == "html" {
+		doc, err := goquery.NewDocumentFromReader(bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse HTML follow-up response: %w", err)
+		}
+
+		for fieldName, selector := range spec.ExtractFields {
+			var value string
+
+			// Support regex extraction if selector starts with "regex:"
+			if strings.HasPrefix(selector, "regex:") {
+				pattern := strings.TrimPrefix(selector, "regex:")
+				re := regexp.MustCompile(pattern)
+				matches := re.FindStringSubmatch(string(bodyBytes))
+				if len(matches) > 1 {
+					value = matches[1] // First capture group
+				}
+				log.WithFields(log.Fields{
+					"field":   fieldName,
+					"value":   value,
+					"pattern": pattern,
+				}).Debug("Extracted value from HTML using regex (follow-up)")
+			} else {
+				// CSS selector extraction
+				value = doc.Find(selector).AttrOr("value", "")
+				if value == "" {
+					value = doc.Find(selector).AttrOr("action", "")
+				}
+				if value == "" {
+					value = doc.Find(selector).Text()
+				}
+				log.WithFields(log.Fields{
+					"field":    fieldName,
+					"value":    value,
+					"selector": selector,
+				}).Debug("Extracted value from HTML using CSS selector (follow-up)")
+			}
+
+			extractedValues[fieldName] = strings.TrimSpace(value)
+		}
+	}
+
+	// Recursively handle nested follow-ups (though typically not needed)
+	if spec.FollowUpRequest != nil {
+		// Merge parent and current extracted values for the next follow-up
+		mergedValues := make(map[string]string)
+		for k, v := range parentExtractedValues {
+			mergedValues[k] = v
+		}
+		for k, v := range extractedValues {
+			mergedValues[k] = v
+		}
+
+		nestedValues, nestedClient, err := executeFollowUpRequest(ctx, spec.FollowUpRequest, service, reqClient, mergedValues)
+		if err != nil {
+			return nil, nil, err
+		}
+		for k, v := range nestedValues {
+			extractedValues[k] = v
+		}
+		if nestedClient != nil {
+			reqClient = nestedClient
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"extracted_count": len(extractedValues),
+	}).Debug("Follow-up pre-request completed")
+
+	return extractedValues, reqClient, nil
+}
+
+// parseHttpResponse parses the upload response based on the parser spec
+func parseHttpResponse(resp *http.Response, parser *ResponseParserSpec, filePath string) (string, string, error) {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if parser.Type == "json" {
+		// Parse JSON response
+		var data map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			return "", "", fmt.Errorf("failed to parse JSON response: %w", err)
+		}
+
+		// Check status if specified
+		if parser.StatusPath != "" {
+			status := getJSONValue(data, parser.StatusPath)
+			if status != parser.SuccessValue {
+				msg := getJSONValue(data, "message")
+				if msg == "" {
+					msg = getJSONValue(data, "error")
+				}
+				if msg == "" {
+					msg = fmt.Sprintf("upload failed with status: %s", status)
+				}
+				return "", "", fmt.Errorf("%s", msg)
+			}
+		}
+
+		// Extract URLs or values for template substitution
+		url := getJSONValue(data, parser.URLPath)
+		thumb := getJSONValue(data, parser.ThumbPath)
+
+		// NEW: Support URL templates for constructing URLs from extracted values
+		if parser.URLTemplate != "" {
+			// Add filename to data for template substitution
+			dataWithFile := make(map[string]interface{})
+			for k, v := range data {
+				dataWithFile[k] = v
+			}
+			dataWithFile["filename"] = filepath.Base(filePath)
+			url = substituteTemplate(parser.URLTemplate, dataWithFile)
+		}
+		if parser.ThumbTemplate != "" {
+			dataWithFile := make(map[string]interface{})
+			for k, v := range data {
+				dataWithFile[k] = v
+			}
+			dataWithFile["filename"] = filepath.Base(filePath)
+			thumb = substituteTemplate(parser.ThumbTemplate, dataWithFile)
+		} else if parser.URLTemplate != "" && thumb == "" {
+			// If URL template is used but no thumb template, use URL as thumb
+			thumb = url
+		}
+
+		if url == "" {
+			return "", "", fmt.Errorf("no URL found in response at path: %s", parser.URLPath)
+		}
+
+		return url, thumb, nil
+	} else if parser.Type == "html" {
+		// Parse HTML response using goquery
+		doc, err := goquery.NewDocumentFromReader(bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to parse HTML: %w", err)
+		}
+
+		// Use CSS selectors from parser spec
+		url := doc.Find(parser.URLPath).AttrOr("value", "")
+		if url == "" {
+			url = doc.Find(parser.URLPath).Text()
+		}
+
+		thumb := doc.Find(parser.ThumbPath).AttrOr("value", "")
+		if thumb == "" {
+			thumb = doc.Find(parser.ThumbPath).AttrOr("src", "")
+		}
+		if thumb == "" {
+			thumb = doc.Find(parser.ThumbPath).Text()
+		}
+
+		if url == "" {
+			return "", "", fmt.Errorf("no URL found with selector: %s", parser.URLPath)
+		}
+
+		return url, thumb, nil
+	}
+
+	return "", "", fmt.Errorf("unsupported parser type: %s", parser.Type)
+}
+
+// substituteTemplateFromMap replaces {key} placeholders in a template with values from a string map
+func substituteTemplateFromMap(template string, values map[string]string) string {
+	result := template
+
+	// Find all {key} placeholders and replace them
+	re := regexp.MustCompile(`\{([^}]+)\}`)
+	matches := re.FindAllStringSubmatch(template, -1)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		placeholder := match[0] // e.g., "{csrf_token}"
+		key := match[1]          // e.g., "csrf_token"
+
+		// Look up value in map
+		if value, exists := values[key]; exists {
+			result = strings.Replace(result, placeholder, value, -1)
+		}
+	}
+
+	return result
+}
+
+// substituteTemplate replaces {key} placeholders in a template with values from JSON data
+func substituteTemplate(template string, data map[string]interface{}) string {
+	result := template
+
+	// Find all {key} placeholders and replace them
+	re := regexp.MustCompile(`\{([^}]+)\}`)
+	matches := re.FindAllStringSubmatch(template, -1)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		placeholder := match[0] // e.g., "{id}"
+		key := match[1]          // e.g., "id"
+
+		// Extract value from JSON using dot notation
+		value := getJSONValue(data, key)
+		if value != "" {
+			result = strings.Replace(result, placeholder, value, -1)
+		}
+	}
+
+	return result
+}
+
+// getJSONValue extracts a value from nested JSON using dot notation (e.g., "data.image_url")
+func getJSONValue(data map[string]interface{}, path string) string {
+	if path == "" {
+		return ""
+	}
+
+	parts := strings.Split(path, ".")
+	current := interface{}(data)
+
+	for _, part := range parts {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			current = v[part]
+		default:
+			return ""
+		}
+	}
+
+	// Convert final value to string
+	switch v := current.(type) {
+	case string:
+		return v
+	case float64:
+		return fmt.Sprintf("%.0f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return ""
+	}
 }
 
 // --- Upload Implementations ---
@@ -514,6 +1333,11 @@ func getImxFormatId(s string) string {
 }
 
 func uploadImx(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
+	// RATE LIMITING: Wait for rate limiter approval to prevent IP bans
+	if err := waitForRateLimit(ctx, "imx.to"); err != nil {
+		return "", "", fmt.Errorf("rate limit: %w", err)
+	}
+
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
@@ -721,6 +1545,11 @@ func scrapeImxBBCode(viewerURL string) (string, string, error) {
 }
 
 func uploadPixhost(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
+	// RATE LIMITING: Wait for rate limiter approval to prevent IP bans
+	if err := waitForRateLimit(ctx, "pixhost.to"); err != nil {
+		return "", "", fmt.Errorf("rate limit: %w", err)
+	}
+
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
@@ -791,18 +1620,23 @@ func uploadPixhost(ctx context.Context, fp string, job *JobRequest) (string, str
 }
 
 func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
-	stateMutex.Lock()
-	needsLogin := viprSessId == ""
-	upUrl := viprEndpoint
-	sessId := viprSessId
-	stateMutex.Unlock()
+	// RATE LIMITING: Wait for rate limiter approval to prevent IP bans
+	if err := waitForRateLimit(ctx, "vipr.im"); err != nil {
+		return "", "", fmt.Errorf("rate limit: %w", err)
+	}
+
+	viprSt.mu.RLock()
+	needsLogin := viprSt.sessId == ""
+	upUrl := viprSt.endpoint
+	sessId := viprSt.sessId
+	viprSt.mu.RUnlock()
 
 	if needsLogin {
 		doViprLogin(job.Creds)
-		stateMutex.Lock()
-		upUrl = viprEndpoint
-		sessId = viprSessId
-		stateMutex.Unlock()
+		viprSt.mu.RLock()
+		upUrl = viprSt.endpoint
+		sessId = viprSt.sessId
+		viprSt.mu.RUnlock()
 	}
 
 	if upUrl == "" {
@@ -902,16 +1736,21 @@ func uploadVipr(ctx context.Context, fp string, job *JobRequest) (string, string
 }
 
 func uploadTurbo(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
-	stateMutex.Lock()
-	needsLogin := turboEndpoint == ""
-	endp := turboEndpoint
-	stateMutex.Unlock()
+	// RATE LIMITING: Wait for rate limiter approval to prevent IP bans
+	if err := waitForRateLimit(ctx, "turboimagehost"); err != nil {
+		return "", "", fmt.Errorf("rate limit: %w", err)
+	}
+
+	turboSt.mu.RLock()
+	needsLogin := turboSt.endpoint == ""
+	endp := turboSt.endpoint
+	turboSt.mu.RUnlock()
 
 	if needsLogin {
 		doTurboLogin(job.Creds)
-		stateMutex.Lock()
-		endp = turboEndpoint
-		stateMutex.Unlock()
+		turboSt.mu.RLock()
+		endp = turboSt.endpoint
+		turboSt.mu.RUnlock()
 	}
 
 	if endp == "" {
@@ -999,18 +1838,23 @@ func uploadTurbo(ctx context.Context, fp string, job *JobRequest) (string, strin
 }
 
 func uploadImageBam(ctx context.Context, fp string, job *JobRequest) (string, string, error) {
-	stateMutex.Lock()
-	needsLogin := ibUploadToken == ""
-	csrf := ibCsrf
-	token := ibUploadToken
-	stateMutex.Unlock()
+	// RATE LIMITING: Wait for rate limiter approval to prevent IP bans
+	if err := waitForRateLimit(ctx, "imagebam.com"); err != nil {
+		return "", "", fmt.Errorf("rate limit: %w", err)
+	}
+
+	ibSt.mu.RLock()
+	needsLogin := ibSt.uploadToken == ""
+	csrf := ibSt.csrf
+	token := ibSt.uploadToken
+	ibSt.mu.RUnlock()
 
 	if needsLogin {
 		doImageBamLogin(job.Creds)
-		stateMutex.Lock()
-		csrf = ibCsrf
-		token = ibUploadToken
-		stateMutex.Unlock()
+		ibSt.mu.RLock()
+		csrf = ibSt.csrf
+		token = ibSt.uploadToken
+		ibSt.mu.RUnlock()
 	}
 
 	pr, pw := io.Pipe()
@@ -1161,27 +2005,27 @@ func doViprLogin(creds map[string]string) bool {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	doc, _ := goquery.NewDocumentFromReader(bytes.NewReader(bodyBytes))
 
-	stateMutex.Lock()
-	defer stateMutex.Unlock()
+	viprSt.mu.Lock()
+	defer viprSt.mu.Unlock()
 
 	if action, exists := doc.Find("form[action*='upload.cgi']").Attr("action"); exists {
-		viprEndpoint = action
+		viprSt.endpoint = action
 	}
 	if val, exists := doc.Find("input[name='sess_id']").Attr("value"); exists {
-		viprSessId = val
+		viprSt.sessId = val
 	}
-	if viprSessId == "" {
+	if viprSt.sessId == "" {
 		html := string(bodyBytes)
 		if m := regexp.MustCompile(`name=["']sess_id["']\s+value=["']([^"']+)["']`).FindStringSubmatch(html); len(m) > 1 {
-			viprSessId = m[1]
+			viprSt.sessId = m[1]
 		}
-		if viprEndpoint == "" {
+		if viprSt.endpoint == "" {
 			if m := regexp.MustCompile(`action=["'](https?://[^/]+/cgi-bin/upload\.cgi)`).FindStringSubmatch(html); len(m) > 1 {
-				viprEndpoint = m[1]
+				viprSt.endpoint = m[1]
 			}
 		}
 	}
-	return viprSessId != ""
+	return viprSt.sessId != ""
 }
 
 func scrapeViprGalleries() []map[string]string {
@@ -1246,34 +2090,34 @@ func doImageBamLogin(creds map[string]string) bool {
 	defer func() { _ = resp2.Body.Close() }()
 	doc2, _ := goquery.NewDocumentFromReader(resp2.Body)
 
-	stateMutex.Lock()
-	defer stateMutex.Unlock()
+	ibSt.mu.Lock()
+	defer ibSt.mu.Unlock()
 
-	ibCsrf = doc2.Find("meta[name='csrf-token']").AttrOr("content", "")
-	if ibCsrf == "" {
+	ibSt.csrf = doc2.Find("meta[name='csrf-token']").AttrOr("content", "")
+	if ibSt.csrf == "" {
 		doc2.Find("meta").Each(func(i int, s *goquery.Selection) {
 			if s.AttrOr("name", "") == "csrf-token" {
-				ibCsrf = s.AttrOr("content", "")
+				ibSt.csrf = s.AttrOr("content", "")
 			}
 		})
 	}
-	if ibCsrf != "" {
+	if ibSt.csrf != "" {
 		req, _ := http.NewRequest("POST", "https://www.imagebam.com/upload/session", strings.NewReader("content_type=1&thumbnail_size=1"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
-		req.Header.Set("X-CSRF-TOKEN", ibCsrf)
+		req.Header.Set("X-CSRF-TOKEN", ibSt.csrf)
 		req.Header.Set("User-Agent", UserAgent)
 		if r3, e3 := client.Do(req); e3 == nil {
 			defer func() { _ = r3.Body.Close() }()
 			var j struct{ Status, Data string }
 			if err := json.NewDecoder(r3.Body).Decode(&j); err == nil {
 				if j.Status == "success" {
-					ibUploadToken = j.Data
+					ibSt.uploadToken = j.Data
 				}
 			}
 		}
 	}
-	return ibCsrf != ""
+	return ibSt.csrf != ""
 }
 
 func doTurboLogin(creds map[string]string) bool {
@@ -1291,13 +2135,13 @@ func doTurboLogin(creds map[string]string) bool {
 	b, _ := io.ReadAll(resp.Body)
 	html := string(b)
 
-	stateMutex.Lock()
-	defer stateMutex.Unlock()
+	turboSt.mu.Lock()
+	defer turboSt.mu.Unlock()
 
 	if m := regexp.MustCompile(`endpoint:\s*'([^']+)'`).FindStringSubmatch(html); len(m) > 1 {
-		turboEndpoint = m[1]
+		turboSt.endpoint = m[1]
 	}
-	return turboEndpoint != ""
+	return turboSt.endpoint != ""
 }
 
 func scrapeBBCode(urlStr string) (string, string, error) {
@@ -1333,9 +2177,9 @@ func handleViperLogin(job JobRequest) {
 	body := string(b)
 	if strings.Contains(body, "Thank you for logging in") {
 		if m := regexp.MustCompile(`SECURITYTOKEN\s*=\s*"([^"]+)"`).FindStringSubmatch(body); len(m) > 1 {
-			stateMutex.Lock()
-			vgSecurityToken = m[1]
-			stateMutex.Unlock()
+			vgSt.mu.Lock()
+			vgSt.securityToken = m[1]
+			vgSt.mu.Unlock()
 		}
 		sendJSON(OutputEvent{Type: "result", Status: "success", Msg: "Login OK"})
 	} else {
@@ -1344,20 +2188,20 @@ func handleViperLogin(job JobRequest) {
 }
 
 func handleViperPost(job JobRequest) {
-	stateMutex.Lock()
-	token := vgSecurityToken
+	vgSt.mu.RLock()
+	token := vgSt.securityToken
 	needsRefresh := token == "" || token == "guest"
-	stateMutex.Unlock()
+	vgSt.mu.RUnlock()
 
 	if needsRefresh {
 		if resp, err := doRequest(context.Background(), "GET", "https://vipergirls.to/forum.php", nil, ""); err == nil {
 			b, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			if m := regexp.MustCompile(`SECURITYTOKEN\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b)); len(m) > 1 {
-				stateMutex.Lock()
-				vgSecurityToken = m[1]
+				vgSt.mu.Lock()
+				vgSt.securityToken = m[1]
 				token = m[1]
-				stateMutex.Unlock()
+				vgSt.mu.Unlock()
 			}
 		}
 	}

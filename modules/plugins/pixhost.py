@@ -131,6 +131,39 @@ class PixhostPlugin(ImageHostPlugin):
 
     # --- Upload Implementation (Go Sidecar Handles Uploads) ---
 
+    def build_http_request(self, file_path: str, config: Dict[str, Any], creds: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build HTTP request specification for Pixhost.to upload.
+        This replaces the hardcoded uploadPixhost() function in Go.
+        """
+        # Map content type to Pixhost API value
+        content_type = "1" if config.get("content_type") == "Adult" else "0"
+
+        # Build multipart fields
+        multipart_fields = {
+            "img": {"type": "file", "value": file_path},
+            "content_type": {"type": "text", "value": content_type},
+            "max_th_size": {"type": "text", "value": config.get("thumbnail_size", "200")},
+        }
+
+        # Add gallery hash if specified
+        gallery_hash = config.get("gallery_hash", "").strip()
+        if gallery_hash:
+            multipart_fields["gallery_hash"] = {"type": "text", "value": gallery_hash}
+
+        return {
+            "url": "https://api.pixhost.to/images",
+            "method": "POST",
+            "headers": {},  # No special headers needed
+            "multipart_fields": multipart_fields,
+            "response_parser": {
+                "type": "json",
+                "url_path": "show_url",
+                "thumb_path": "th_url",
+                # Pixhost returns empty show_url on error, no explicit status field
+            }
+        }
+
     def initialize_session(self, config: Dict[str, Any], creds: Dict[str, Any]) -> Dict[str, Any]:
         """Stub - Go sidecar handles session initialization."""
         return {}
@@ -157,7 +190,7 @@ class PixhostPlugin(ImageHostPlugin):
     def upload_file(
         self, file_path: str, group, config: Dict[str, Any], context: Dict[str, Any], progress_callback
     ):
-        """Stub - Go sidecar handles file uploads."""
+        """Stub - Go sidecar handles file uploads via build_http_request()."""
         pass
 
     def finalize_batch(self, context: Dict[str, Any]) -> None:

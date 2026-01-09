@@ -215,6 +215,72 @@ class ViprPlugin(ImageHostPlugin):
 
         threading.Thread(target=_task, daemon=True).start()
 
+    # NEW: Generic HTTP request builder with session management (Phase 3)
+    def build_http_request(self, file_path: str, config: Dict[str, Any], creds: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build HTTP request specification for Vipr.im upload with session management.
+        Uses Phase 3 multi-step pre-request hooks:
+        1. POST to /login.html (sets cookies)
+        2. GET / (extracts sess_id using cookies from step 1)
+        """
+        import random
+        import string
+
+        # Generate random upload ID
+        upload_id = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+
+        # Base endpoint (will be overridden if pre-request extracts custom endpoint)
+        base_endpoint = "https://vipr.im/cgi-bin/upload.cgi"
+        upload_url = f"{base_endpoint}?upload_id={upload_id}&js_on=1&utype=reg&upload_type=file"
+
+        return {
+            "url": upload_url,
+            "method": "POST",
+            "headers": {},
+            "pre_request": {
+                "action": "login_step1",
+                "url": "https://vipr.im/login.html",
+                "method": "POST",
+                "headers": {},
+                "form_fields": {
+                    "op": "login",
+                    "login": creds.get("vipr_user", ""),
+                    "password": creds.get("vipr_pass", "")
+                },
+                "use_cookies": True,  # Set session cookies
+                "extract_fields": {},  # No extraction from login POST
+                "response_type": "html",
+                # Step 2: GET homepage to extract session ID
+                "follow_up_request": {
+                    "action": "login_step2",
+                    "url": "https://vipr.im/",
+                    "method": "GET",
+                    "headers": {},
+                    "form_fields": {},
+                    "use_cookies": True,  # Use cookies from step 1
+                    "extract_fields": {
+                        "sess_id": "input[name='sess_id']",  # Extract session ID
+                        "endpoint": "form[action*='upload.cgi']"  # Extract upload endpoint
+                    },
+                    "response_type": "html"
+                }
+            },
+            "multipart_fields": {
+                "file_0": {"type": "file", "value": file_path},
+                "upload_type": {"type": "text", "value": "file"},
+                "sess_id": {"type": "dynamic", "value": "sess_id"},  # Use extracted session ID
+                "thumb_size": {"type": "text", "value": config.get("thumbnail_size", "170x170")},
+                "fld_id": {"type": "text", "value": config.get("vipr_gal_id", "0")},
+                "tos": {"type": "text", "value": "1"},
+                "submit_btn": {"type": "text", "value": "Upload"}
+            },
+            "response_parser": {
+                "type": "html",
+                "url_path": "input[name='link_url']",  # CSS selector for image URL
+                "thumb_path": "input[name='thumb_url']"  # CSS selector for thumbnail URL
+            }
+        }
+
     # Go-based upload - stubs for abstract methods (uploads handled by Go sidecar)
     def initialize_session(self, config: Dict[str, Any], creds: Dict[str, Any]) -> Dict[str, Any]:
         """Stub - Go sidecar handles session initialization."""
