@@ -144,15 +144,20 @@ def build_http_request(self, file_path, config, creds):
 
 ---
 
-### Phase 3: Enhancements
+### Phase 3: Future Enhancements
 
-After architectural refactor:
-
-1. **Credential Encryption:** Store API keys/passwords encrypted at rest
+**High Priority:**
+1. **Session Management for HTTP Runner:** Enable Vipr/Turbo/ImageBam migration
+   - Pre-request login hooks
+   - Cookie jar support
+   - Dynamic field resolution
 2. **Retry Logic:** Automatic retry with exponential backoff for transient failures
 3. **Progress Streaming:** Real-time upload progress (currently only status changes)
-4. **Plugin Sandboxing:** Limit plugin file system access
-5. **Configuration Validation:** JSON schema validation for plugin configs
+
+**Medium Priority:**
+4. **Credential Encryption:** Store API keys/passwords encrypted at rest (OS keychain)
+5. **Plugin Sandboxing:** Limit plugin file system access
+6. **Configuration Validation:** JSON schema validation for plugin configs
 
 ---
 
@@ -263,7 +268,9 @@ The application is **production-ready** and **architecturally sound** after v2.2
 
 ## Version History
 
-- **v2.2.0** (2026-01-09): Generic HTTP runner architecture - eliminated split-brain problem
+- **v2.2.0** (2026-01-09): Generic HTTP runner architecture - eliminated split-brain problem for stateless services
+  - IMX and Pixhost fully migrated
+  - Vipr, Turbo, ImageBam remain in legacy (session management required)
 - **v2.1.0** (2026-01-09): Fixed timeouts, added rate limiting, refactored state
 - **v2.0.0** (Previous): Fixed stderr pipe deadlock
 - **v1.x**: Initial Python/Go hybrid implementation
