@@ -135,7 +135,7 @@ jobs:
       run: |
         pyi-makespec --noconsole --onefile --name "ConniesUploader" `
           --icon "logo.ico" `
-          --add-binary "uploader.exe;." `
+          --add-data "uploader.exe;." `
           --add-data "logo.ico;." `
           --collect-all tkinterdnd2 `
           main.py
@@ -151,9 +151,9 @@ jobs:
         $size = (Get-Item "dist\ConniesUploader.exe").length
         $sizeMB = [math]::Round($size / 1MB, 2)
         Write-Output "Build size: $sizeMB MB"
-        
-        # Increased threshold to 45MB to be safe
-        if ($size -lt 45000000) {
+
+        # Expected size >40MB when uploader.exe is included (matches CI threshold)
+        if ($size -lt 40000000) {
           Write-Error "❌ Build size is only ${sizeMB} MB. Sidecar likely missing!"
           exit 1
         }
