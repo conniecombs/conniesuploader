@@ -84,7 +84,7 @@ class ImxPlugin(ImageHostPlugin):
                 "type": "dropdown",
                 "key": "thumbnail_size",
                 "label": "Thumbnail Size",
-                "values": ["100", "150", "180", "250", "300"],
+                "values": ["100", "150", "180", "250", "300", "600"],
                 "default": "180",
                 "required": True,
             },
@@ -174,12 +174,19 @@ class ImxPlugin(ImageHostPlugin):
         Build HTTP request specification for IMX.to upload.
         This replaces the hardcoded uploadImx() function in Go.
         """
-        # Map thumbnail size to IMX API ID
-        size_map = {"100": "1", "150": "6", "180": "2", "250": "3", "300": "4"}
-        # Convert to string in case UI passes integer
-        thumb_size_value = str(config.get("thumbnail_size", "180"))
+        # DIAGNOSTIC: Log what we receive from UI
+        logger.info(f"IMX build_http_request called with config keys: {list(config.keys())}")
+        logger.info(f"IMX thumbnail_size from config: {repr(config.get('thumbnail_size'))} (type: {type(config.get('thumbnail_size')).__name__})")
+
+        # Map thumbnail size to IMX API ID (matching old working code)
+        size_map = {"100": "1", "150": "6", "180": "2", "250": "3", "300": "4", "600": "5"}
+
+        # Support both new (thumbnail_size) and legacy (imx_thumb) keys
+        thumb_size_raw = config.get("thumbnail_size") or config.get("imx_thumb")
+        # Convert to string in case UI passes integer or other type
+        thumb_size_value = str(thumb_size_raw) if thumb_size_raw else "180"
         thumb_size = size_map.get(thumb_size_value, "2")
-        logger.debug(f"IMX thumbnail config: size={thumb_size_value} → ID={thumb_size}")
+        logger.info(f"IMX thumbnail mapping: raw={repr(thumb_size_raw)} → '{thumb_size_value}' → API ID '{thumb_size}'")
 
         # Map thumbnail format to IMX API ID
         format_map = {
@@ -188,7 +195,9 @@ class ImxPlugin(ImageHostPlugin):
             "Proportional": "2",
             "Square": "3"
         }
-        thumb_format_value = str(config.get("thumbnail_format", "Fixed Width"))
+        # Support both new (thumbnail_format) and legacy (imx_format) keys
+        thumb_format_raw = config.get("thumbnail_format") or config.get("imx_format")
+        thumb_format_value = str(thumb_format_raw) if thumb_format_raw else "Fixed Width"
         thumb_format = format_map.get(thumb_format_value, "1")
 
         # Build multipart fields
