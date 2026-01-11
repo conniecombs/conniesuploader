@@ -14,13 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🔧 Fixed
 
 #### **Critical Bug Fixes**
-- **PyInstaller Plugin Discovery**
+- **PyInstaller Plugin Discovery and Bundling**
   - Fixed image host dropdown not working in release builds
-  - Replaced filesystem-based plugin discovery (`Path.glob`) with `pkgutil.iter_modules`
-  - Plugin discovery now works correctly in both development and PyInstaller builds
-  - Issue: In v1.0.4 release builds, users could not select different image hosts from dropdown
-  - Root cause: PyInstaller bundles .py files as compiled modules, making glob-based discovery fail
-  - Solution: Use pkgutil which is the standard way to discover modules in packages
+  - **Primary Issue**: Plugin modules were not being bundled by PyInstaller at all
+  - **Secondary Issue**: Plugin discovery code used filesystem paths instead of module introspection
+  - **Build Script Fixes**:
+    - Added `--collect-submodules modules.plugins` to bundle all plugin modules
+    - Added explicit `--hidden-import` for each plugin (imx, pixhost, vipr, turbo, imagebam, imgur)
+    - Updated `build_uploader.bat` for Windows local builds
+    - Updated `.github/workflows/release.yml` for CI/CD builds (all platforms)
+  - **Code Fixes**:
+    - Replaced filesystem-based discovery (`Path.glob`) with `pkgutil.iter_modules`
+    - Plugin discovery now works correctly in both development and PyInstaller builds
+  - **Impact**: Users can now select different image hosts from the dropdown in release builds
 
 ---
 
