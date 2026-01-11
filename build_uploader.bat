@@ -219,12 +219,20 @@ if not exist "%~dp0uploader.exe" (
 )
 
 echo       - Packaging with PyInstaller...
-echo       - Including: uploader.exe, logo.ico, tkinterdnd2
+echo       - Including: uploader.exe, logo.ico, tkinterdnd2, plugins
 pyinstaller --noconsole --onefile --clean --name "ConniesUploader" ^
     --icon "logo.ico" ^
     --add-data "uploader.exe;." ^
     --add-data "logo.ico;." ^
     --collect-all tkinterdnd2 ^
+    --collect-submodules modules.plugins ^
+    --hidden-import modules.plugins.imx ^
+    --hidden-import modules.plugins.pixhost ^
+    --hidden-import modules.plugins.pixhost_v2 ^
+    --hidden-import modules.plugins.vipr ^
+    --hidden-import modules.plugins.turbo ^
+    --hidden-import modules.plugins.imagebam ^
+    --hidden-import modules.plugins.imgur ^
     main.py
 
 if not exist "%~dp0dist\ConniesUploader.exe" (
