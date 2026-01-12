@@ -182,7 +182,7 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
         self.after(100, self.update_ui_loop)
 
         # Start periodic image cleanup to prevent memory leaks
-        self.after(30000, self._cleanup_orphaned_images)
+        self.after(config.UI_CLEANUP_INTERVAL_MS, self._cleanup_orphaned_images)
 
     def _load_credentials(self):
         """Load credentials from system keyring using CredentialsManager."""
@@ -1087,7 +1087,7 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
             self.image_refs = [ref for ref in self.image_refs if ref in active_refs]
 
         # Schedule next cleanup in 30 seconds
-        self.after(30000, self._cleanup_orphaned_images)
+        self.after(config.UI_CLEANUP_INTERVAL_MS, self._cleanup_orphaned_images)
 
     def log(self, msg):
         logger.info(msg)

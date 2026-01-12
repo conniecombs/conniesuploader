@@ -6,19 +6,58 @@ import re
 import base64
 from typing import List, Optional, Union
 from PIL import Image
+from loguru import logger
 from modules.sidecar import SidecarBridge
+from modules import config
+from modules.exceptions import InvalidFileException
 
-VALID_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+# Import centralized extension validation from config
+VALID_EXTENSIONS = config.VALID_EXTENSIONS
 
 
-def scan_inputs(inputs: Union[str, List[str]]) -> List[str]:
+def validate_file_size(file_path: str, max_size: int = None) -> bool:
+    """Validate that a file is not too large.
+
+    Args:
+        file_path: Path to the file to check
+        max_size: Maximum file size in bytes (defaults to config.MAX_FILE_SIZE)
+
+    Returns:
+        True if file size is valid
+
+    Raises:
+        InvalidFileException: If file exceeds maximum size
+    """
+    if max_size is None:
+        max_size = config.MAX_FILE_SIZE
+
+    try:
+        file_size = os.path.getsize(file_path)
+        if file_size > max_size:
+            max_size_mb = max_size / (1024 * 1024)
+            file_size_mb = file_size / (1024 * 1024)
+            raise InvalidFileException(
+                f"File '{os.path.basename(file_path)}' is too large "
+                f"({file_size_mb:.1f}MB). Maximum allowed size is {max_size_mb:.1f}MB."
+            )
+        return True
+    except OSError as e:
+        logger.warning(f"Could not check file size for {file_path}: {e}")
+        return True  # Allow the file if we can't check its size
+
+
+def scan_inputs(inputs: Union[str, List[str]], validate_size: bool = True) -> List[str]:
     """Scan inputs (files or folders) and return valid image paths.
 
     Args:
         inputs: Single file/folder path or list of paths
+        validate_size: Whether to validate file sizes (defaults to True)
 
     Returns:
         Sorted list of unique valid image file paths
+
+    Raises:
+        InvalidFileException: If any file exceeds the maximum size limit
     """
     media_files: List[str] = []
 
@@ -30,30 +69,41 @@ def scan_inputs(inputs: Union[str, List[str]]) -> List[str]:
     for item in inputs:
         if os.path.isfile(item):
             if item.lower().endswith(VALID_EXTENSIONS):
+                # Validate file size if requested
+                if validate_size:
+                    validate_file_size(item)
                 media_files.append(item)
         elif os.path.isdir(item):
-            media_files.extend(get_files_from_directory(item))
+            media_files.extend(get_files_from_directory(item, validate_size=validate_size))
 
     return sorted(list(set(media_files)))
 
 
-def get_files_from_directory(directory: str) -> List[str]:
+def get_files_from_directory(directory: str, validate_size: bool = True) -> List[str]:
     """Recursively get all valid image files from a directory.
 
     Args:
         directory: Path to directory to scan
+        validate_size: Whether to validate file sizes (defaults to True)
 
     Returns:
         List of valid image file paths
+
+    Raises:
+        InvalidFileException: If any file exceeds the maximum size limit
     """
     files: List[str] = []
     try:
         for root, _, filenames in os.walk(directory):
             for filename in filenames:
                 if filename.lower().endswith(VALID_EXTENSIONS):
-                    files.append(os.path.join(root, filename))
+                    file_path = os.path.join(root, filename)
+                    # Validate file size if requested
+                    if validate_size:
+                        validate_file_size(file_path)
+                    files.append(file_path)
     except OSError as e:
-        print(f"Error scanning directory: {e}")
+        logger.error(f"Error scanning directory: {e}")
     return files
 
 

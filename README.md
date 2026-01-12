@@ -1,15 +1,15 @@
 # Connie's Uploader Ultimate
 
-![Version](https://img.shields.io/badge/version-1.0.4-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
-![Production Ready](https://img.shields.io/badge/production%20ready-85%25-yellow.svg)
-![CI Status](https://github.com/conniecombs/GolangVersion/workflows/CI%20-%20Build%20and%20Test/badge.svg)
-![Security](https://github.com/conniecombs/GolangVersion/workflows/Security%20Scanning/badge.svg)
-![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8.svg)
-![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB.svg)
-![Test Coverage](https://img.shields.io/badge/coverage-12.5%25-orange.svg)
-![Code Grade](https://img.shields.io/badge/grade-B+-success.svg)
+![Project version badge showing v1.0.4](https://img.shields.io/badge/version-1.0.4-blue.svg)
+![MIT License badge](https://img.shields.io/badge/license-MIT-green.svg)
+![Supported platforms: Windows, Linux, and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
+![Production readiness status at 85 percent](https://img.shields.io/badge/production%20ready-85%25-yellow.svg)
+![Continuous integration build and test status](https://github.com/conniecombs/GolangVersion/workflows/CI%20-%20Build%20and%20Test/badge.svg)
+![Security scanning workflow status](https://github.com/conniecombs/GolangVersion/workflows/Security%20Scanning/badge.svg)
+![Go programming language version 1.24](https://img.shields.io/badge/Go-1.24-00ADD8.svg)
+![Python version 3.11 or higher required](https://img.shields.io/badge/Python-3.11+-3776AB.svg)
+![Test coverage at 12.5 percent](https://img.shields.io/badge/coverage-12.5%25-orange.svg)
+![Code quality grade B plus](https://img.shields.io/badge/grade-B+-success.svg)
 
 A powerful, multi-service image hosting uploader with an intuitive GUI. Upload images to multiple image hosting services with advanced features like batch processing, gallery management, and automatic forum posting.
 

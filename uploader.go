@@ -35,6 +35,20 @@ import (
 // --- Constants ---
 const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+// HTTP Timeout Constants
+const (
+	// ClientTimeout is the total timeout for a complete request/response cycle
+	ClientTimeout = 180 * time.Second // 3 minutes for large file uploads
+	// PreRequestTimeout is the timeout for pre-request operations (login, endpoint discovery)
+	PreRequestTimeout = 60 * time.Second // 1 minute for authentication/setup
+	// ResponseHeaderTimeout is the timeout waiting for server response headers
+	ResponseHeaderTimeout = 60 * time.Second // Allow time for server-side processing
+	// PreRequestHeaderTimeout is a shorter timeout for pre-request header responses
+	PreRequestHeaderTimeout = 30 * time.Second // 30 seconds for setup requests
+	// ProgressReportInterval is the interval for reporting upload progress
+	ProgressReportInterval = 2 * time.Second // Report progress every 2 seconds
+)
+
 func init() {
 	// Configure structured logging
 	log.SetFormatter(&log.JSONFormatter{
@@ -113,6 +127,11 @@ type OutputEvent struct {
 
 // --- Globals ---
 var outputMutex sync.Mutex
+
+// client is the shared HTTP client for all requests.
+// SAFETY: Initialized once in main() before worker goroutines start,
+// making it safe for concurrent read-only access without additional locking.
+// The client itself is thread-safe for concurrent use.
 var client *http.Client
 
 // Rate Limiters (prevent IP bans by throttling requests per service)
@@ -240,11 +259,11 @@ func main() {
 	// - ResponseHeaderTimeout: 60s to allow servers time to process large uploads before responding
 	// This prevents premature timeouts on large files or slow connections
 	client = &http.Client{
-		Timeout:   180 * time.Second,
+		Timeout:   ClientTimeout,
 		Jar:       jar,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost:   10,
-			ResponseHeaderTimeout: 60 * time.Second,
+			ResponseHeaderTimeout: ResponseHeaderTimeout,
 			DisableKeepAlives:     false, // Allow connection reuse for efficiency
 		},
 	}
@@ -548,8 +567,8 @@ func processFile(fp string, job *JobRequest) {
 
 	// TIMEOUT FIX: 3-minute timeout per file to match documentation
 	// Allows time for large uploads (10-50MB) on typical connections
-	// Combined with client timeouts (180s/60s), this prevents premature failures
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	// Combined with client timeouts, this prevents premature failures
+	ctx, cancel := context.WithTimeout(context.Background(), ClientTimeout)
 	defer cancel()
 
 	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> 3-minute timeout started for %s", filepath.Base(fp))})
@@ -564,7 +583,7 @@ func processFile(fp string, job *JobRequest) {
 
 	// Heartbeat goroutine to prove timeout is working
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(ProgressReportInterval)
 		defer ticker.Stop()
 		count := 0
 		for {
@@ -663,7 +682,7 @@ func processFileGeneric(fp string, job *JobRequest) {
 	logger.Info("=== GENERIC PROCESSFILE CALLED ===")
 
 	// Same timeout as legacy processFile
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), ClientTimeout)
 	defer cancel()
 
 	sendJSON(OutputEvent{Type: "log", Msg: fmt.Sprintf(">>> 3-minute timeout started for %s", filepath.Base(fp))})
@@ -849,11 +868,11 @@ func executePreRequest(ctx context.Context, spec *PreRequestSpec, service string
 	if spec.UseCookies {
 		jar, _ := cookiejar.New(nil)
 		preClient = &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: PreRequestTimeout,
 			Jar:     jar,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost:   10,
-				ResponseHeaderTimeout: 30 * time.Second,
+				ResponseHeaderTimeout: PreRequestHeaderTimeout,
 			},
 		}
 	} else {
@@ -1007,11 +1026,11 @@ func executeFollowUpRequest(ctx context.Context, spec *PreRequestSpec, service s
 		if spec.UseCookies {
 			jar, _ := cookiejar.New(nil)
 			reqClient = &http.Client{
-				Timeout: 60 * time.Second,
+				Timeout: PreRequestTimeout,
 				Jar:     jar,
 				Transport: &http.Transport{
 					MaxIdleConnsPerHost:   10,
-					ResponseHeaderTimeout: 30 * time.Second,
+					ResponseHeaderTimeout: PreRequestHeaderTimeout,
 				},
 			}
 		} else {
@@ -1403,8 +1422,8 @@ func uploadImx(ctx context.Context, fp string, job *JobRequest) (string, string,
 			pw.CloseWithError(fmt.Errorf("failed to write thumbnail_size field: %w", err))
 			return
 		}
-		if err := writer.WriteField("thumb_size_contaner", sizeId); err != nil {
-			pw.CloseWithError(fmt.Errorf("failed to write thumb_size_contaner field: %w", err))
+		if err := writer.WriteField("thumb_size_container", sizeId); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write thumb_size_container field: %w", err))
 			return
 		}
 

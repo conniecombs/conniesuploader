@@ -8,6 +8,7 @@ eliminating the need for manual widget creation in plugins.
 
 from typing import Dict, List, Any, Optional, Tuple
 import customtkinter as ctk
+import tkinter as tk
 from loguru import logger
 from ..widgets import MouseWheelComboBox
 
@@ -18,6 +19,81 @@ class ValidationError(Exception):
     def __init__(self, errors: List[str]):
         self.errors = errors
         super().__init__(f"Validation failed: {', '.join(errors)}")
+
+
+class ToolTip:
+    """Simple tooltip implementation for widgets."""
+
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
+        """
+        Create a tooltip for a widget.
+
+        Args:
+            widget: The widget to attach the tooltip to
+            text: The text to display in the tooltip
+            delay: Delay in milliseconds before showing tooltip
+        """
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self.scheduled_id = None
+
+        # Bind events
+        self.widget.bind("<Enter>", self._on_enter)
+        self.widget.bind("<Leave>", self._on_leave)
+        self.widget.bind("<Button>", self._on_leave)  # Hide on click
+
+    def _on_enter(self, event=None):
+        """Schedule tooltip to show after delay."""
+        self._cancel_scheduled()
+        self.scheduled_id = self.widget.after(self.delay, self._show_tooltip)
+
+    def _on_leave(self, event=None):
+        """Hide tooltip and cancel scheduled show."""
+        self._cancel_scheduled()
+        self._hide_tooltip()
+
+    def _cancel_scheduled(self):
+        """Cancel any scheduled tooltip show."""
+        if self.scheduled_id:
+            self.widget.after_cancel(self.scheduled_id)
+            self.scheduled_id = None
+
+    def _show_tooltip(self):
+        """Display the tooltip."""
+        if self.tooltip_window or not self.text:
+            return
+
+        # Get widget position
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        # Create tooltip window
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)  # Remove window decorations
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+        # Create label with tooltip text
+        label = tk.Label(
+            self.tooltip_window,
+            text=self.text,
+            justify=tk.LEFT,
+            background="#ffffe0",  # Light yellow background
+            foreground="#000000",  # Black text
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("sans-serif", "9", "normal"),
+            padx=5,
+            pady=3
+        )
+        label.pack()
+
+    def _hide_tooltip(self):
+        """Hide the tooltip."""
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
 
 
 class SchemaRenderer:
@@ -258,9 +334,9 @@ class SchemaRenderer:
                 )
 
     def _add_tooltip(self, widget, text: str) -> None:
-        """Add tooltip to widget (placeholder for future implementation)."""
-        # TODO: Implement actual tooltip functionality
-        pass
+        """Add tooltip to widget."""
+        if text:
+            ToolTip(widget, text)
 
     def extract_config(
         self, ui_vars: Dict[str, Any], schema: List[Dict]

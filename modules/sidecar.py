@@ -65,12 +65,13 @@ class SidecarBridge:
             exe = os.path.join(os.path.dirname(sys.executable), binary_name)
 
         if not os.path.exists(exe):
-            logger.error(f"Sidecar executable not found. Tried:")
-            logger.error(f"  1. {os.path.join(base_dir, binary_name)}")
-            logger.error(f"  2. {os.path.join(os.getcwd(), binary_name)}")
+            logger.error(f"Sidecar executable '{binary_name}' not found.")
+            logger.error(f"Expected location (primary): {os.path.join(base_dir, binary_name)}")
+            logger.error(f"Fallback locations checked:")
+            logger.error(f"  - Current working directory: {os.path.join(os.getcwd(), binary_name)}")
             if getattr(sys, "frozen", False):
-                logger.error(f"  3. {os.path.join(os.path.dirname(sys.executable), binary_name)}")
-            logger.error(f"PyInstaller mode: {getattr(sys, 'frozen', False)}")
+                logger.error(f"  - Executable directory (PyInstaller): {os.path.join(os.path.dirname(sys.executable), binary_name)}")
+            logger.error(f"Running in PyInstaller mode: {getattr(sys, 'frozen', False)}")
             if hasattr(sys, '_MEIPASS'):
                 logger.error(f"_MEIPASS: {sys._MEIPASS}")
             return
