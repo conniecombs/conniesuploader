@@ -35,6 +35,8 @@ IMAGEBAM_UPLOAD_URL = "https://www.imagebam.com/upload"
 IMAGEBAM_GALLERIES_URL = "https://www.imagebam.com/my/galleries"
 
 SUPPORTED_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+# Alias for backward compatibility - centralized extension validation
+VALID_EXTENSIONS = SUPPORTED_EXTENSIONS
 SETTINGS_FILE = "user_settings.json"
 CRASH_LOG_FILE = "crash_log.log"
 UI_THUMB_SIZE = (40, 40)
@@ -60,6 +62,7 @@ MAX_FILENAME_LENGTH = 255
 UI_UPDATE_INTERVAL_MS = 10
 UI_QUEUE_BATCH_SIZE = 10
 PROGRESS_UPDATE_BATCH_SIZE = 50
+UI_CLEANUP_INTERVAL_MS = 30000  # 30 seconds - cleanup orphaned images
 
 # Keyring Services
 KEYRING_SERVICE_API = "ImageUploader:imx_api_key"

@@ -120,19 +120,32 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
     return sanitized
 
 
-def validate_service_name(service: str) -> bool:
+def validate_service_name(service: str, plugin_manager=None) -> bool:
     """Validate that a service name is recognized.
 
     Args:
         service: The service name to validate
+        plugin_manager: Optional PluginManager instance to get loaded plugins dynamically.
+                       If not provided, uses a fallback set of known services.
 
     Returns:
         True if valid, False otherwise
+
+    Note:
+        This function now supports dynamic validation based on loaded plugins,
+        avoiding the need to hardcode service names.
     """
-    valid_services = {"imx.to", "pixhost.to", "turboimagehost", "vipr.im", "imagebam.com"}
+    # Get valid services dynamically from plugin manager if available
+    if plugin_manager is not None:
+        valid_services = {plugin.service_id for plugin in plugin_manager.get_all_plugins()}
+    else:
+        # Fallback to hardcoded list if plugin_manager not provided
+        # This ensures backward compatibility if called without plugin_manager
+        valid_services = {"imx.to", "pixhost.to", "turboimagehost", "vipr.im", "imagebam.com"}
+        logger.debug("Using fallback service list (no plugin_manager provided)")
 
     if service not in valid_services:
-        logger.warning(f"Invalid service name: {service}")
+        logger.warning(f"Invalid service name: {service}. Valid services: {valid_services}")
         return False
 
     return True
