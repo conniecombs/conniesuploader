@@ -18,6 +18,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -51,6 +52,18 @@ const (
 	ProgressReportInterval = 2 * time.Second // Report progress every 2 seconds
 )
 
+// Retry Configuration Constants
+const (
+	// DefaultMaxRetries is the default number of retry attempts for failed requests
+	DefaultMaxRetries = 3
+	// DefaultInitialBackoff is the default initial backoff duration before first retry
+	DefaultInitialBackoff = 1 * time.Second
+	// DefaultMaxBackoff is the default maximum backoff duration between retries
+	DefaultMaxBackoff = 30 * time.Second
+	// DefaultBackoffMultiplier is the default multiplier for exponential backoff
+	DefaultBackoffMultiplier = 2.0
+)
+
 func init() {
 	// Configure structured logging
 	log.SetFormatter(&log.JSONFormatter{
@@ -67,13 +80,22 @@ func init() {
 
 // --- Protocol Structs ---
 type JobRequest struct {
-	Action      string            `json:"action"`
-	Service     string            `json:"service"`
-	Files       []string          `json:"files"`
-	Creds       map[string]string `json:"creds"`
-	Config      map[string]string `json:"config"`
-	ContextData map[string]string `json:"context_data"`
-	HttpSpec    *HttpRequestSpec  `json:"http_spec,omitempty"` // New generic HTTP runner
+	Action       string            `json:"action"`
+	Service      string            `json:"service"`
+	Files        []string          `json:"files"`
+	Creds        map[string]string `json:"creds"`
+	Config       map[string]string `json:"config"`
+	ContextData  map[string]string `json:"context_data"`
+	HttpSpec     *HttpRequestSpec  `json:"http_spec,omitempty"`     // New generic HTTP runner
+	RateLimits   *RateLimitConfig  `json:"rate_limits,omitempty"`   // Per-service rate limit override
+	RetryConfig  *RetryConfig      `json:"retry_config,omitempty"`  // Retry configuration
+}
+
+// RateLimitConfig defines rate limiting parameters for a service
+type RateLimitConfig struct {
+	RequestsPerSecond float64 `json:"requests_per_second"` // Rate limit (requests per second)
+	BurstSize         int     `json:"burst_size"`          // Burst size
+	GlobalLimit       float64 `json:"global_limit"`        // Global rate limit override (optional)
 }
 
 // HttpRequestSpec defines a generic HTTP request for plugin-driven uploads
@@ -125,6 +147,24 @@ type OutputEvent struct {
 	Thumb    string      `json:"thumb,omitempty"`
 	Msg      string      `json:"msg,omitempty"`
 	Data     interface{} `json:"data,omitempty"`
+}
+
+// RetryConfig holds configuration for retry logic
+type RetryConfig struct {
+	MaxRetries         int           `json:"max_retries"`
+	InitialBackoff     time.Duration `json:"initial_backoff"`
+	MaxBackoff         time.Duration `json:"max_backoff"`
+	BackoffMultiplier  float64       `json:"backoff_multiplier"`
+	RetryableHTTPCodes []int         `json:"retryable_http_codes"`
+}
+
+// ProgressEvent represents upload progress information
+type ProgressEvent struct {
+	BytesTransferred int64   `json:"bytes_transferred"`
+	TotalBytes       int64   `json:"total_bytes"`
+	Speed            float64 `json:"speed"`        // bytes per second
+	Percentage       float64 `json:"percentage"`
+	ETA              int     `json:"eta_seconds"`  // estimated time remaining in seconds
 }
 
 // --- Globals ---
@@ -202,6 +242,39 @@ func getRateLimiter(service string) *rate.Limiter {
 	return limiter
 }
 
+// updateRateLimiter updates or creates a rate limiter for a service with custom config
+func updateRateLimiter(service string, config *RateLimitConfig) {
+	if config == nil {
+		return
+	}
+
+	rateLimiterMutex.Lock()
+	defer rateLimiterMutex.Unlock()
+
+	// Create new rate limiter with custom settings
+	limiter := rate.NewLimiter(
+		rate.Limit(config.RequestsPerSecond),
+		config.BurstSize,
+	)
+	rateLimiters[service] = limiter
+
+	log.WithFields(log.Fields{
+		"service":   service,
+		"rate":      config.RequestsPerSecond,
+		"burst":     config.BurstSize,
+	}).Debug("Updated rate limiter configuration")
+
+	// Update global rate limiter if specified
+	if config.GlobalLimit > 0 {
+		// Keep existing burst size but update rate
+		oldBurst := globalRateLimiter.Burst()
+		globalRateLimiter = rate.NewLimiter(rate.Limit(config.GlobalLimit), oldBurst)
+		log.WithFields(log.Fields{
+			"global_rate": config.GlobalLimit,
+		}).Debug("Updated global rate limiter")
+	}
+}
+
 // waitForRateLimit waits for rate limiter approval before proceeding
 // Returns error if context is cancelled while waiting
 // Checks both global rate limiter (10 req/s across all services) and service-specific limiter
@@ -235,6 +308,371 @@ func randomString(n int) string {
 		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
+}
+
+// getDefaultRetryConfig returns the default retry configuration
+func getDefaultRetryConfig() *RetryConfig {
+	return &RetryConfig{
+		MaxRetries:         DefaultMaxRetries,
+		InitialBackoff:     DefaultInitialBackoff,
+		MaxBackoff:         DefaultMaxBackoff,
+		BackoffMultiplier:  DefaultBackoffMultiplier,
+		RetryableHTTPCodes: []int{408, 429, 500, 502, 503, 504},
+	}
+}
+
+// extractStatusCode attempts to extract HTTP status code from an error
+// Returns 0 if no status code can be extracted
+func extractStatusCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	// Try to extract status code from error message
+	// Common patterns: "status code: 500", "HTTP 429", "got status 503"
+	errStr := err.Error()
+
+	// Pattern 1: "status code: 500" or "status code 500"
+	if idx := strings.Index(errStr, "status code"); idx != -1 {
+		remaining := errStr[idx+len("status code"):]
+		remaining = strings.TrimLeft(remaining, ": ")
+		if code, parseErr := strconv.Atoi(strings.Fields(remaining)[0]); parseErr == nil {
+			return code
+		}
+	}
+
+	// Pattern 2: "HTTP 429" or "http 503"
+	if idx := strings.Index(strings.ToLower(errStr), "http "); idx != -1 {
+		remaining := errStr[idx+5:]
+		if code, parseErr := strconv.Atoi(strings.Fields(remaining)[0]); parseErr == nil {
+			return code
+		}
+	}
+
+	// Pattern 3: numbers in the 400-599 range (common HTTP status codes)
+	re := regexp.MustCompile(`\b([45]\d{2})\b`)
+	if matches := re.FindStringSubmatch(errStr); len(matches) > 1 {
+		if code, parseErr := strconv.Atoi(matches[1]); parseErr == nil {
+			return code
+		}
+	}
+
+	return 0
+}
+
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error, statusCode int, config *RetryConfig) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for retryable HTTP status codes
+	for _, code := range config.RetryableHTTPCodes {
+		if statusCode == code {
+			return true
+		}
+	}
+
+	// Check for network-related errors
+	errStr := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"temporary failure",
+		"no such host",
+		"network is unreachable",
+		"broken pipe",
+		"i/o timeout",
+		"tls handshake timeout",
+		"dial tcp",
+		"eof",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// calculateBackoff calculates the backoff duration for a given retry attempt
+func calculateBackoff(attempt int, config *RetryConfig) time.Duration {
+	backoff := float64(config.InitialBackoff) * math.Pow(config.BackoffMultiplier, float64(attempt))
+	if backoff > float64(config.MaxBackoff) {
+		backoff = float64(config.MaxBackoff)
+	}
+
+	// Add jitter (±20%) to prevent thundering herd
+	// Use crypto/rand for security compliance
+	var jitterBytes [8]byte
+	if _, err := rand.Read(jitterBytes[:]); err != nil {
+		// Fallback to no jitter if crypto/rand fails (unlikely)
+		return time.Duration(backoff)
+	}
+
+	// Convert random bytes to float in range [0, 1)
+	randUint := uint64(jitterBytes[0]) |
+		uint64(jitterBytes[1])<<8 |
+		uint64(jitterBytes[2])<<16 |
+		uint64(jitterBytes[3])<<24 |
+		uint64(jitterBytes[4])<<32 |
+		uint64(jitterBytes[5])<<40 |
+		uint64(jitterBytes[6])<<48 |
+		uint64(jitterBytes[7])<<56
+
+	// Scale to [0, 1) range
+	randFloat := float64(randUint) / float64(^uint64(0))
+
+	// Convert to [-0.2, +0.2] range for ±20% jitter
+	jitter := (randFloat * 0.4) - 0.2
+	backoff = backoff * (1.0 + jitter)
+
+	return time.Duration(backoff)
+}
+
+// retryWithBackoff executes a function with retry logic and exponential backoff
+// fn should return (result, statusCode, error)
+func retryWithBackoff[T any](
+	ctx context.Context,
+	config *RetryConfig,
+	fn func() (T, int, error),
+	logger *log.Entry,
+) (T, error) {
+	var lastErr error
+	var lastStatusCode int
+	var result T
+
+	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+		// Execute the function
+		result, lastStatusCode, lastErr = fn()
+
+		// Success
+		if lastErr == nil {
+			if attempt > 0 {
+				logger.WithFields(log.Fields{
+					"attempt": attempt + 1,
+				}).Info("Request succeeded after retry")
+			}
+			return result, nil
+		}
+
+		// Check if we should retry
+		if !isRetryableError(lastErr, lastStatusCode, config) {
+			logger.WithFields(log.Fields{
+				"error":       lastErr.Error(),
+				"status_code": lastStatusCode,
+			}).Debug("Error is not retryable")
+			return result, lastErr
+		}
+
+		// Check if we have retries left
+		if attempt >= config.MaxRetries {
+			logger.WithFields(log.Fields{
+				"error":        lastErr.Error(),
+				"status_code":  lastStatusCode,
+				"max_retries":  config.MaxRetries,
+			}).Warn("Max retries exhausted")
+			break
+		}
+
+		// Calculate backoff
+		backoffDuration := calculateBackoff(attempt+1, config)
+		logger.WithFields(log.Fields{
+			"attempt":         attempt + 1,
+			"backoff_seconds": backoffDuration.Seconds(),
+			"error":           lastErr.Error(),
+			"status_code":     lastStatusCode,
+		}).Info("Request failed, retrying with backoff")
+
+		// Wait for backoff (with context cancellation support)
+		select {
+		case <-time.After(backoffDuration):
+			// Continue to next attempt
+		case <-ctx.Done():
+			logger.Debug("Context cancelled during backoff")
+			return result, ctx.Err()
+		}
+	}
+
+	// All retries exhausted
+	return result, fmt.Errorf("max retries (%d) exhausted, last error: %w", config.MaxRetries, lastErr)
+}
+
+// ProgressWriter wraps an io.Writer and tracks upload progress
+type ProgressWriter struct {
+	writer         io.Writer
+	totalBytes     int64
+	bytesWritten   int64
+	startTime      time.Time
+	lastReportTime time.Time
+	filePath       string
+	mu             sync.Mutex
+}
+
+// NewProgressWriter creates a new progress tracking writer
+func NewProgressWriter(w io.Writer, totalBytes int64, filePath string) *ProgressWriter {
+	now := time.Now()
+	return &ProgressWriter{
+		writer:         w,
+		totalBytes:     totalBytes,
+		bytesWritten:   0,
+		startTime:      now,
+		lastReportTime: now,
+		filePath:       filePath,
+	}
+}
+
+// Write implements io.Writer and tracks progress
+func (pw *ProgressWriter) Write(p []byte) (int, error) {
+	n, err := pw.writer.Write(p)
+
+	pw.mu.Lock()
+	pw.bytesWritten += int64(n)
+	bytesWritten := pw.bytesWritten
+	totalBytes := pw.totalBytes
+	now := time.Now()
+	shouldReport := now.Sub(pw.lastReportTime) >= ProgressReportInterval
+	if shouldReport {
+		pw.lastReportTime = now
+	}
+	pw.mu.Unlock()
+
+	// Report progress periodically
+	if shouldReport {
+		elapsed := now.Sub(pw.startTime).Seconds()
+		speed := float64(bytesWritten) / elapsed
+		percentage := (float64(bytesWritten) / float64(totalBytes)) * 100.0
+
+		var eta int
+		if speed > 0 {
+			remaining := totalBytes - bytesWritten
+			eta = int(float64(remaining) / speed)
+		}
+
+		sendJSON(OutputEvent{
+			Type:     "progress",
+			FilePath: pw.filePath,
+			Data: ProgressEvent{
+				BytesTransferred: bytesWritten,
+				TotalBytes:       totalBytes,
+				Speed:            speed,
+				Percentage:       percentage,
+				ETA:              eta,
+			},
+		})
+	}
+
+	return n, err
+}
+
+// --- Input Validation Functions ---
+
+// validateFilePath validates a file path for security and correctness
+func validateFilePath(filePath string) error {
+	if filePath == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+
+	// Convert to absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(filePath, "..") {
+		return fmt.Errorf("path traversal detected in: %s", filePath)
+	}
+
+	// Check if file exists
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist: %s", absPath)
+		}
+		return fmt.Errorf("cannot access file: %w", err)
+	}
+
+	// Check if it's a regular file (not a directory or special file)
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("path is not a regular file: %s", absPath)
+	}
+
+	// Check file size (limit to 100MB for safety)
+	const maxFileSize = 100 * 1024 * 1024 // 100MB
+	if fileInfo.Size() > maxFileSize {
+		return fmt.Errorf("file too large: %d bytes (max %d bytes)", fileInfo.Size(), maxFileSize)
+	}
+
+	// Check for symlinks (potential security issue)
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("symlinks not allowed: %s", absPath)
+	}
+
+	return nil
+}
+
+// validateServiceName validates that a service name is safe
+func validateServiceName(service string) error {
+	if service == "" {
+		return fmt.Errorf("service name cannot be empty")
+	}
+
+	// Allow only alphanumeric, dots, and hyphens
+	validPattern := regexp.MustCompile(`^[a-zA-Z0-9\.\-]+$`)
+	if !validPattern.MatchString(service) {
+		return fmt.Errorf("invalid service name: %s (only alphanumeric, dots, and hyphens allowed)", service)
+	}
+
+	if len(service) > 100 {
+		return fmt.Errorf("service name too long: %d characters (max 100)", len(service))
+	}
+
+	return nil
+}
+
+// validateJobRequest validates all fields of a job request
+func validateJobRequest(job *JobRequest) error {
+	// Validate service name
+	if err := validateServiceName(job.Service); err != nil {
+		return fmt.Errorf("invalid service: %w", err)
+	}
+
+	// Validate file paths
+	if len(job.Files) == 0 {
+		return fmt.Errorf("no files provided")
+	}
+
+	if len(job.Files) > 1000 {
+		return fmt.Errorf("too many files: %d (max 1000)", len(job.Files))
+	}
+
+	for _, filePath := range job.Files {
+		if err := validateFilePath(filePath); err != nil {
+			return fmt.Errorf("invalid file path %s: %w", filePath, err)
+		}
+	}
+
+	// Validate action
+	validActions := map[string]bool{
+		"upload":           true,
+		"http_upload":      true,
+		"login":            true,
+		"verify":           true,
+		"list_galleries":   true,
+		"create_gallery":   true,
+		"finalize_gallery": true,
+		"generate_thumb":   true,
+	}
+
+	if !validActions[job.Action] {
+		return fmt.Errorf("invalid action: %s", job.Action)
+	}
+
+	return nil
 }
 
 func main() {
@@ -383,6 +821,26 @@ func handleJob(job JobRequest) {
 			sendJSON(OutputEvent{Type: "error", Msg: fmt.Sprintf("Panic: %v", r)})
 		}
 	}()
+
+	// Validate job request
+	if err := validateJobRequest(&job); err != nil {
+		log.WithError(err).Error("Job validation failed")
+		sendJSON(OutputEvent{
+			Type: "error",
+			Msg:  fmt.Sprintf("Invalid job request: %v", err),
+		})
+		return
+	}
+
+	// Apply custom rate limits if provided
+	if job.RateLimits != nil {
+		updateRateLimiter(job.Service, job.RateLimits)
+	}
+
+	// Set default retry config if not provided
+	if job.RetryConfig == nil {
+		job.RetryConfig = getDefaultRetryConfig()
+	}
 
 	switch job.Action {
 	case "upload":
@@ -709,27 +1167,52 @@ func processFile(fp string, job *JobRequest) {
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
 		logger.Debug("Status 'Uploading' sent")
 
-		var url, thumb string
-		var err error
-
 		logger.WithField("service", job.Service).Debug("About to call upload function")
 
-		// Pass context to upload functions for proper cancellation
-		switch job.Service {
-		case "imx.to":
-			url, thumb, err = uploadImx(ctx, fp, job)
-		case "pixhost.to":
-			url, thumb, err = uploadPixhost(ctx, fp, job)
-		case "vipr.im":
-			url, thumb, err = uploadVipr(ctx, fp, job)
-		case "turboimagehost":
-			url, thumb, err = uploadTurbo(ctx, fp, job)
-		case "imagebam.com":
-			url, thumb, err = uploadImageBam(ctx, fp, job)
-		default:
-			err = fmt.Errorf("unknown service: %s", job.Service)
-			logger.WithField("service", job.Service).Error("UNKNOWN SERVICE - this will fail immediately")
+		// Execute upload with retry logic
+		retryConfig := job.RetryConfig
+		if retryConfig == nil {
+			retryConfig = getDefaultRetryConfig()
 		}
+
+		type uploadResult struct {
+			url   string
+			thumb string
+		}
+
+		// Wrap upload in retry logic
+		uploadRes, err := retryWithBackoff(
+			ctx,
+			retryConfig,
+			func() (uploadResult, int, error) {
+				var url, thumb string
+				var uploadErr error
+
+				// Pass context to upload functions for proper cancellation
+				switch job.Service {
+				case "imx.to":
+					url, thumb, uploadErr = uploadImx(ctx, fp, job)
+				case "pixhost.to":
+					url, thumb, uploadErr = uploadPixhost(ctx, fp, job)
+				case "vipr.im":
+					url, thumb, uploadErr = uploadVipr(ctx, fp, job)
+				case "turboimagehost":
+					url, thumb, uploadErr = uploadTurbo(ctx, fp, job)
+				case "imagebam.com":
+					url, thumb, uploadErr = uploadImageBam(ctx, fp, job)
+				default:
+					uploadErr = fmt.Errorf("unknown service: %s", job.Service)
+					logger.WithField("service", job.Service).Error("UNKNOWN SERVICE - this will fail immediately")
+				}
+
+				statusCode := extractStatusCode(uploadErr)
+				return uploadResult{url: url, thumb: thumb}, statusCode, uploadErr
+			},
+			logger,
+		)
+
+		url := uploadRes.url
+		thumb := uploadRes.thumb
 
 		logger.WithFields(log.Fields{
 			"url":   url,
@@ -806,8 +1289,31 @@ func processFileGeneric(fp string, job *JobRequest) {
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
 		logger.Debug("Status 'Uploading' sent")
 
-		// Execute the generic HTTP request
-		url, thumb, err := executeHttpUpload(ctx, fp, job)
+		// Execute the generic HTTP request with retry logic
+		retryConfig := job.RetryConfig
+		if retryConfig == nil {
+			retryConfig = getDefaultRetryConfig()
+		}
+
+		type uploadResult struct {
+			url   string
+			thumb string
+		}
+
+		// Wrap upload in retry logic
+		uploadRes, err := retryWithBackoff(
+			ctx,
+			retryConfig,
+			func() (uploadResult, int, error) {
+				url, thumb, uploadErr := executeHttpUpload(ctx, fp, job)
+				statusCode := extractStatusCode(uploadErr)
+				return uploadResult{url: url, thumb: thumb}, statusCode, uploadErr
+			},
+			logger,
+		)
+
+		url := uploadRes.url
+		thumb := uploadRes.thumb
 
 		logger.WithFields(log.Fields{
 			"url":   url,
@@ -907,9 +1413,22 @@ func executeHttpUpload(ctx context.Context, fp string, job *JobRequest) (string,
 					return
 				}
 				defer func() { _ = f.Close() }()
-				if _, err := io.Copy(part, f); err != nil {
-					pw.CloseWithError(fmt.Errorf("failed to copy file %s: %w", filePath, err))
-					return
+
+				// Get file size for progress tracking
+				fileInfo, err := f.Stat()
+				if err == nil && fileInfo.Size() > 0 {
+					// Wrap with progress writer for real-time upload progress
+					progressWriter := NewProgressWriter(part, fileInfo.Size(), filePath)
+					if _, err := io.Copy(progressWriter, f); err != nil {
+						pw.CloseWithError(fmt.Errorf("failed to copy file %s: %w", filePath, err))
+						return
+					}
+				} else {
+					// Fallback without progress tracking if size unavailable
+					if _, err := io.Copy(part, f); err != nil {
+						pw.CloseWithError(fmt.Errorf("failed to copy file %s: %w", filePath, err))
+						return
+					}
 				}
 			} else if field.Type == "text" {
 				// Text field
