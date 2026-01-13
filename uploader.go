@@ -322,6 +322,45 @@ func getDefaultRetryConfig() *RetryConfig {
 	}
 }
 
+// extractStatusCode attempts to extract HTTP status code from an error
+// Returns 0 if no status code can be extracted
+func extractStatusCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	// Try to extract status code from error message
+	// Common patterns: "status code: 500", "HTTP 429", "got status 503"
+	errStr := err.Error()
+
+	// Pattern 1: "status code: 500" or "status code 500"
+	if idx := strings.Index(errStr, "status code"); idx != -1 {
+		remaining := errStr[idx+len("status code"):]
+		remaining = strings.TrimLeft(remaining, ": ")
+		if code, parseErr := strconv.Atoi(strings.Fields(remaining)[0]); parseErr == nil {
+			return code
+		}
+	}
+
+	// Pattern 2: "HTTP 429" or "http 503"
+	if idx := strings.Index(strings.ToLower(errStr), "http "); idx != -1 {
+		remaining := errStr[idx+5:]
+		if code, parseErr := strconv.Atoi(strings.Fields(remaining)[0]); parseErr == nil {
+			return code
+		}
+	}
+
+	// Pattern 3: numbers in the 400-599 range (common HTTP status codes)
+	re := regexp.MustCompile(`\b([45]\d{2})\b`)
+	if matches := re.FindStringSubmatch(errStr); len(matches) > 1 {
+		if code, parseErr := strconv.Atoi(matches[1]); parseErr == nil {
+			return code
+		}
+	}
+
+	return 0
+}
+
 // isRetryableError determines if an error should trigger a retry
 func isRetryableError(err error, statusCode int, config *RetryConfig) bool {
 	if err == nil {
@@ -1106,27 +1145,52 @@ func processFile(fp string, job *JobRequest) {
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
 		logger.Debug("Status 'Uploading' sent")
 
-		var url, thumb string
-		var err error
-
 		logger.WithField("service", job.Service).Debug("About to call upload function")
 
-		// Pass context to upload functions for proper cancellation
-		switch job.Service {
-		case "imx.to":
-			url, thumb, err = uploadImx(ctx, fp, job)
-		case "pixhost.to":
-			url, thumb, err = uploadPixhost(ctx, fp, job)
-		case "vipr.im":
-			url, thumb, err = uploadVipr(ctx, fp, job)
-		case "turboimagehost":
-			url, thumb, err = uploadTurbo(ctx, fp, job)
-		case "imagebam.com":
-			url, thumb, err = uploadImageBam(ctx, fp, job)
-		default:
-			err = fmt.Errorf("unknown service: %s", job.Service)
-			logger.WithField("service", job.Service).Error("UNKNOWN SERVICE - this will fail immediately")
+		// Execute upload with retry logic
+		retryConfig := job.RetryConfig
+		if retryConfig == nil {
+			retryConfig = getDefaultRetryConfig()
 		}
+
+		type uploadResult struct {
+			url   string
+			thumb string
+		}
+
+		// Wrap upload in retry logic
+		uploadRes, err := retryWithBackoff(
+			ctx,
+			retryConfig,
+			func() (uploadResult, int, error) {
+				var url, thumb string
+				var uploadErr error
+
+				// Pass context to upload functions for proper cancellation
+				switch job.Service {
+				case "imx.to":
+					url, thumb, uploadErr = uploadImx(ctx, fp, job)
+				case "pixhost.to":
+					url, thumb, uploadErr = uploadPixhost(ctx, fp, job)
+				case "vipr.im":
+					url, thumb, uploadErr = uploadVipr(ctx, fp, job)
+				case "turboimagehost":
+					url, thumb, uploadErr = uploadTurbo(ctx, fp, job)
+				case "imagebam.com":
+					url, thumb, uploadErr = uploadImageBam(ctx, fp, job)
+				default:
+					uploadErr = fmt.Errorf("unknown service: %s", job.Service)
+					logger.WithField("service", job.Service).Error("UNKNOWN SERVICE - this will fail immediately")
+				}
+
+				statusCode := extractStatusCode(uploadErr)
+				return uploadResult{url: url, thumb: thumb}, statusCode, uploadErr
+			},
+			logger,
+		)
+
+		url := uploadRes.url
+		thumb := uploadRes.thumb
 
 		logger.WithFields(log.Fields{
 			"url":   url,
@@ -1203,8 +1267,31 @@ func processFileGeneric(fp string, job *JobRequest) {
 		sendJSON(OutputEvent{Type: "status", FilePath: fp, Status: "Uploading"})
 		logger.Debug("Status 'Uploading' sent")
 
-		// Execute the generic HTTP request
-		url, thumb, err := executeHttpUpload(ctx, fp, job)
+		// Execute the generic HTTP request with retry logic
+		retryConfig := job.RetryConfig
+		if retryConfig == nil {
+			retryConfig = getDefaultRetryConfig()
+		}
+
+		type uploadResult struct {
+			url   string
+			thumb string
+		}
+
+		// Wrap upload in retry logic
+		uploadRes, err := retryWithBackoff(
+			ctx,
+			retryConfig,
+			func() (uploadResult, int, error) {
+				url, thumb, uploadErr := executeHttpUpload(ctx, fp, job)
+				statusCode := extractStatusCode(uploadErr)
+				return uploadResult{url: url, thumb: thumb}, statusCode, uploadErr
+			},
+			logger,
+		)
+
+		url := uploadRes.url
+		thumb := uploadRes.thumb
 
 		logger.WithFields(log.Fields{
 			"url":   url,
