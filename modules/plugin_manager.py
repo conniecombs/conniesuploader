@@ -9,8 +9,9 @@ No manual registration required - just drop a plugin file and it's loaded!
 import importlib
 import inspect
 import pkgutil
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 from loguru import logger
+import re
 
 from .plugins.base import ImageHostPlugin
 import modules.plugins
@@ -180,3 +181,149 @@ class PluginManager:
         self._plugins.clear()
         self.load_errors.clear()
         self.load_plugins()
+
+    @staticmethod
+    def parse_version(version_str: str) -> Tuple[int, int, int]:
+        """
+        Parse a semantic version string (e.g., "2.1.3") into a tuple.
+
+        Args:
+            version_str: Version string in semver format
+
+        Returns:
+            Tuple of (major, minor, patch) as integers
+
+        Examples:
+            "2.1.3" -> (2, 1, 3)
+            "1.0" -> (1, 0, 0)
+            "3" -> (3, 0, 0)
+        """
+        # Extract numbers from version string (handles "v2.1.3" or "2.1.3")
+        match = re.match(r'v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', str(version_str))
+        if not match:
+            logger.warning(f"Invalid version format: {version_str}, defaulting to 0.0.0")
+            return (0, 0, 0)
+
+        major = int(match.group(1)) if match.group(1) else 0
+        minor = int(match.group(2)) if match.group(2) else 0
+        patch = int(match.group(3)) if match.group(3) else 0
+
+        return (major, minor, patch)
+
+    @staticmethod
+    def compare_versions(version1: str, version2: str) -> int:
+        """
+        Compare two version strings.
+
+        Args:
+            version1: First version string
+            version2: Second version string
+
+        Returns:
+            -1 if version1 < version2
+            0 if version1 == version2
+            1 if version1 > version2
+
+        Examples:
+            compare_versions("2.0.0", "1.9.0") -> 1
+            compare_versions("1.5.0", "1.5.0") -> 0
+            compare_versions("1.0.0", "2.0.0") -> -1
+        """
+        v1 = PluginManager.parse_version(version1)
+        v2 = PluginManager.parse_version(version2)
+
+        if v1 < v2:
+            return -1
+        elif v1 > v2:
+            return 1
+        else:
+            return 0
+
+    def get_plugin_versions(self) -> Dict[str, str]:
+        """
+        Get versions of all loaded plugins.
+
+        Returns:
+            Dictionary mapping plugin ID to version string
+        """
+        return {
+            plugin_id: plugin.metadata.get("version", "unknown")
+            for plugin_id, plugin in self._plugins.items()
+        }
+
+    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, any]]:
+        """
+        Get detailed information about a specific plugin.
+
+        Args:
+            plugin_id: Plugin identifier
+
+        Returns:
+            Dictionary with plugin information including:
+            - id: Plugin ID
+            - name: Display name
+            - version: Version string
+            - author: Author name
+            - description: Description
+            - implementation: "python" or "go"
+            - features: Supported features
+            - credentials: Required credentials
+            - limits: Service limits
+        """
+        plugin = self.get_plugin(plugin_id)
+        if not plugin:
+            return None
+
+        metadata = plugin.metadata
+
+        return {
+            "id": plugin.id,
+            "name": plugin.name,
+            "version": metadata.get("version", "unknown"),
+            "author": metadata.get("author", "unknown"),
+            "description": metadata.get("description", ""),
+            "implementation": metadata.get("implementation", "python"),
+            "features": metadata.get("features", {}),
+            "credentials": metadata.get("credentials", []),
+            "limits": metadata.get("limits", {}),
+            "website": metadata.get("website", ""),
+        }
+
+    def validate_plugin_update(self, plugin_id: str, new_version: str) -> bool:
+        """
+        Check if a new version is actually newer than the installed version.
+
+        Args:
+            plugin_id: Plugin identifier
+            new_version: New version string to check
+
+        Returns:
+            True if new_version is newer than installed version, False otherwise
+        """
+        plugin = self.get_plugin(plugin_id)
+        if not plugin:
+            logger.warning(f"Plugin {plugin_id} not found")
+            return False
+
+        current_version = plugin.metadata.get("version", "0.0.0")
+
+        comparison = self.compare_versions(new_version, current_version)
+
+        if comparison > 0:
+            logger.info(f"Update available for {plugin_id}: {current_version} -> {new_version}")
+            return True
+        else:
+            logger.debug(f"Version {new_version} is not newer than {current_version} for {plugin_id}")
+            return False
+
+    def get_all_plugin_info(self) -> List[Dict[str, any]]:
+        """
+        Get detailed information for all loaded plugins.
+
+        Returns:
+            List of plugin information dictionaries
+        """
+        return [
+            self.get_plugin_info(plugin_id)
+            for plugin_id in self._plugins.keys()
+        ]
