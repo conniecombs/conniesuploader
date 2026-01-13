@@ -92,7 +92,7 @@ func TestWaitForRateLimitContextTimeout(t *testing.T) {
 	// Create a limiter and exhaust it
 	limiter := getRateLimiter(service)
 	for i := 0; i < 10; i++ {
-		limiter.Wait(context.Background())
+		_ = limiter.Wait(context.Background())
 	}
 
 	// This should fail due to context timeout
@@ -111,7 +111,7 @@ func TestDoRequestBasic(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test response"))
+		_, _ = w.Write([]byte("test response"))
 	}))
 	defer server.Close()
 
@@ -137,7 +137,7 @@ func TestDoRequestWithPost(t *testing.T) {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
+		_, _ = w.Write([]byte("success"))
 	}))
 	defer server.Close()
 
