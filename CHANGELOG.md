@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ✨ Added
+
+#### **Comprehensive Go Test Suite** (2026-01-13)
+- **Test Coverage**: Achieved 30.0% test coverage (up from 12.5%)
+- **Test Files**:
+  - `uploader_coverage_test.go` (766 lines) - Rate limiting, gallery operations, HTTP workflows
+  - `uploader_helpers_test.go` (448 lines) - Helper functions, concurrent access, edge cases
+  - `uploader_utils_test.go` (452 lines) - JSON parsing, template substitution, benchmarks
+  - `uploader_additional_test.go` (329 lines) - Job handling, HTTP requests, concurrency
+- **Total**: 1,995 lines of comprehensive test code
+- **Coverage Areas**:
+  - Rate limiting for all image host services
+  - Gallery creation and finalization workflows
+  - JSON value extraction and template substitution
+  - Concurrent operations and thread safety
+  - HTTP request handling with mock servers
+  - Edge cases and error conditions
+  - Benchmark tests for performance tracking
+
+#### **Graceful Shutdown Mechanism** (2026-01-13)
+- **Signal Handling**: Listen for SIGINT and SIGTERM OS signals
+- **Worker Management**: sync.WaitGroup tracks all worker goroutines
+- **Coordinated Shutdown**:
+  - Stop accepting new jobs immediately on shutdown signal
+  - Close job queue to signal workers
+  - Wait for all in-flight jobs to complete
+  - Clean resource cleanup and logging
+- **EOF Handling**: Gracefully handle stdin closure (normal termination)
+- **Benefits**:
+  - No job loss during shutdown
+  - Uploads complete before exit
+  - Container and systemd friendly
+  - No orphaned goroutines
+  - Clean exit codes
+
+### 🔧 Fixed
+
+#### **Code Quality Improvements** (2026-01-10 - 2026-01-13)
+- Fixed typo: `thumb_size_contaner` → `thumb_size_container`
+- Added alt text to README badges for accessibility
+- Extracted magic numbers to named constants:
+  - `UI_CLEANUP_INTERVAL_MS = 30000`
+  - HTTP timeout constants in uploader.go
+- Centralized file extension validation
+- Improved error messages in sidecar.py
+- Ran `go mod tidy` for dependency cleanup
+
+#### **Feature Completions** (2026-01-10)
+- Implemented tooltip functionality (ToolTip class in schema_renderer.py)
+- Implemented Pixhost gallery creation API (createPixhostGallery)
+- Implemented Pixhost gallery finalization with PATCH requests
+- Added Python API wrappers (create_pixhost_gallery, finalize_pixhost_gallery)
+- Made service validation dynamic via plugin discovery
+- Added max file size validation and enforcement
+
+### 🚀 Improved
+
+#### **Configuration & Validation** (2026-01-10)
+- **JSON Schema Validation**: Added comprehensive validation for user_settings.json
+  - Service name validation with enum
+  - Worker count limits (1-20)
+  - File size limits with min/max
+  - Path validation for directories
+  - Boolean and numeric type validation
+- **Custom Validation Rules**:
+  - Upload size must be in ['Small', 'Medium', 'Large', 'Original']
+  - Gallery validation for Pixhost service
+  - Path existence checks
+  - Helpful error messages
+- **Added Dependencies**: jsonschema==4.23.0
+
+#### **Documentation** (2026-01-10)
+- Added HTTP client thread safety documentation
+- Documented rate limiting implementation
+- Updated REMAINING_ISSUES.md with completion status
+
 ---
 
 ## [1.0.5] - 2026-01-11
