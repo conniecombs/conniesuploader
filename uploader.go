@@ -19,7 +19,6 @@ import (
 	_ "image/png"
 	"io"
 	"math"
-	mathrand "math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -405,9 +404,32 @@ func calculateBackoff(attempt int, config *RetryConfig) time.Duration {
 	if backoff > float64(config.MaxBackoff) {
 		backoff = float64(config.MaxBackoff)
 	}
+
 	// Add jitter (±20%) to prevent thundering herd
-	jitter := (mathrand.Float64() * 0.4) - 0.2 // -20% to +20%
+	// Use crypto/rand for security compliance
+	var jitterBytes [8]byte
+	if _, err := rand.Read(jitterBytes[:]); err != nil {
+		// Fallback to no jitter if crypto/rand fails (unlikely)
+		return time.Duration(backoff)
+	}
+
+	// Convert random bytes to float in range [0, 1)
+	randUint := uint64(jitterBytes[0]) |
+		uint64(jitterBytes[1])<<8 |
+		uint64(jitterBytes[2])<<16 |
+		uint64(jitterBytes[3])<<24 |
+		uint64(jitterBytes[4])<<32 |
+		uint64(jitterBytes[5])<<40 |
+		uint64(jitterBytes[6])<<48 |
+		uint64(jitterBytes[7])<<56
+
+	// Scale to [0, 1) range
+	randFloat := float64(randUint) / float64(^uint64(0))
+
+	// Convert to [-0.2, +0.2] range for ±20% jitter
+	jitter := (randFloat * 0.4) - 0.2
 	backoff = backoff * (1.0 + jitter)
+
 	return time.Duration(backoff)
 }
 
