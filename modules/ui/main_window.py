@@ -930,6 +930,13 @@ class UploaderApp(ctk.CTk, TkinterDnD.DnDWrapper, DragDropMixin):
             pass
 
     def _create_row(self, fp, pil_image, group_widget):
+        """Create a UI row for a file with thumbnail, status, and progress bar.
+
+        Args:
+            fp: File path to the image
+            pil_image: PIL Image object for thumbnail (or None)
+            group_widget: CollapsibleGroupFrame to add the row to
+        """
         group_widget.add_file(fp)
         row = ctk.CTkFrame(group_widget.content_frame)
         row.pack(fill="x", pady=1)

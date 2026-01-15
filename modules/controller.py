@@ -88,6 +88,13 @@ class UploadController:
         #     self.rename_worker.start()
 
     def start_upload(self, pending_files_map, settings, creds):
+        """Start the upload process for all pending files.
+
+        Args:
+            pending_files_map: Dict mapping group titles to lists of file paths
+            settings: User settings dict containing service configs
+            creds: Credentials dict for authentication
+        """
         self.creds = creds
         self.settings = settings
         self.cancel_event.clear()
@@ -111,6 +118,7 @@ class UploadController:
         self.upload_manager.start_batch(pending_files_map, settings, creds)
 
     def stop_upload(self):
+        """Signal all upload threads to stop gracefully."""
         self.cancel_event.set()
 
     def handle_upload_result(self, fp, img, thumb):
