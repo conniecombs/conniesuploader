@@ -1,6 +1,6 @@
 # Connie's Uploader Ultimate
 
-![Project version badge showing v1.0.5](https://img.shields.io/badge/version-1.0.5-blue.svg)
+![Project version badge showing v1.1.0](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![MIT License badge](https://img.shields.io/badge/license-MIT-green.svg)
 ![Supported platforms: Windows, Linux, and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 ![Production readiness status at 92 percent](https://img.shields.io/badge/production%20ready-92%25-brightgreen.svg)
@@ -13,7 +13,7 @@
 
 A powerful, multi-service image hosting uploader with an intuitive GUI. Upload images to multiple image hosting services with advanced features like batch processing, gallery management, automatic retry logic, and real-time progress tracking.
 
-**🎉 Latest Release (v1.0.5 - "Resilience & Intelligence")** - Major enhancement release featuring intelligent retry logic with exponential backoff, real-time progress streaming, comprehensive security validation, configurable rate limits, and plugin versioning system.
+**🎉 Latest Release (v1.1.0 - "Performance & Polish")** - Performance-focused release featuring HTTP connection pooling (20-30% faster uploads), enhanced error messages, drag-and-drop progress indication, plus 18 bug fixes improving stability and code quality.
 
 ## ✨ Recent Improvements
 
