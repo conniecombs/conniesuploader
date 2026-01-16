@@ -15,6 +15,28 @@ from modules.exceptions import InvalidFileException
 VALID_EXTENSIONS = config.VALID_EXTENSIONS
 
 
+def validate_file_extension(file_path: str) -> bool:
+    """Validate that a file has a supported image extension.
+
+    Args:
+        file_path: Path to the file to check
+
+    Returns:
+        True if file extension is valid
+
+    Raises:
+        InvalidFileException: If file has an unsupported extension
+    """
+    filename = os.path.basename(file_path)
+    if not filename.lower().endswith(VALID_EXTENSIONS):
+        supported = ", ".join(VALID_EXTENSIONS)
+        raise InvalidFileException(
+            f"File '{filename}' has an unsupported format. "
+            f"Supported formats: {supported}"
+        )
+    return True
+
+
 def validate_file_size(file_path: str, max_size: int = None) -> bool:
     """Validate that a file is not too large.
 
@@ -69,7 +91,8 @@ def scan_inputs(inputs: Union[str, List[str]], validate_size: bool = True) -> Li
     for item in inputs:
         if os.path.isfile(item):
             if item.lower().endswith(VALID_EXTENSIONS):
-                # Validate file size if requested
+                # Validate extension and file size
+                validate_file_extension(item)
                 if validate_size:
                     validate_file_size(item)
                 media_files.append(item)
@@ -98,7 +121,8 @@ def get_files_from_directory(directory: str, validate_size: bool = True) -> List
             for filename in filenames:
                 if filename.lower().endswith(VALID_EXTENSIONS):
                     file_path = os.path.join(root, filename)
-                    # Validate file size if requested
+                    # Validate extension and file size
+                    validate_file_extension(file_path)
                     if validate_size:
                         validate_file_size(file_path)
                     files.append(file_path)

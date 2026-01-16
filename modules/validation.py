@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from loguru import logger
+from modules import config
 
 
 def validate_file_path(filepath: str, allowed_extensions: tuple = None) -> Optional[str]:
@@ -11,7 +12,7 @@ def validate_file_path(filepath: str, allowed_extensions: tuple = None) -> Optio
 
     Args:
         filepath: The file path to validate
-        allowed_extensions: Tuple of allowed file extensions (e.g., ('.jpg', '.png'))
+        allowed_extensions: Tuple of allowed file extensions (defaults to VALID_EXTENSIONS from config)
 
     Returns:
         Absolute path string if valid, None otherwise
@@ -19,8 +20,11 @@ def validate_file_path(filepath: str, allowed_extensions: tuple = None) -> Optio
     Security Notes:
         - Prevents directory traversal attacks
         - Ensures file exists and is a regular file
-        - Validates file extension if specified
+        - Validates file extension against centralized VALID_EXTENSIONS
     """
+    # Use centralized extensions from config if not specified
+    if allowed_extensions is None:
+        allowed_extensions = config.VALID_EXTENSIONS
     try:
         # Resolve to absolute path and normalize
         abs_path = Path(filepath).resolve()
