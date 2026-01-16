@@ -4,6 +4,28 @@ Plugin Manager with Automatic Discovery (Phase 3).
 
 Automatically discovers and loads all plugins from the plugins folder.
 No manual registration required - just drop a plugin file and it's loaded!
+
+Plugin Priority System:
+    Plugins are sorted by their priority value (0-100 scale):
+    - Lower values = Higher priority (loaded first)
+    - Priority 0-24:  Critical/System plugins
+    - Priority 25-49: High priority plugins
+    - Priority 50:    Default priority (MEDIUM)
+    - Priority 51-74: Lower priority plugins
+    - Priority 75-100: Lowest priority plugins
+
+    Use the constants defined below to set plugin priorities:
+    - PRIORITY_CRITICAL = 10
+    - PRIORITY_HIGH = 25
+    - PRIORITY_MEDIUM = 50 (default)
+    - PRIORITY_LOW = 75
+
+    Example in plugin metadata:
+        metadata = {
+            "priority": PRIORITY_HIGH,  # Load before default plugins
+            "version": "1.0.0",
+            ...
+        }
 """
 
 import importlib
@@ -17,6 +39,13 @@ from .plugins.base import ImageHostPlugin
 import modules.plugins
 
 
+# Plugin Priority Constants (0-100 scale, lower = higher priority)
+PRIORITY_CRITICAL = 10   # Critical/system plugins (highest priority)
+PRIORITY_HIGH = 25       # High priority plugins
+PRIORITY_MEDIUM = 50     # Default priority
+PRIORITY_LOW = 75        # Low priority plugins
+
+
 class PluginManager:
     """
     Manages image hosting plugins with automatic discovery.
@@ -25,8 +54,22 @@ class PluginManager:
         - Auto-discovers plugins from plugins folder
         - No manual registration needed
         - Handles load errors gracefully
-        - Sorts plugins by priority/name
+        - Sorts plugins by priority (0-100 scale, lower = higher priority)
+        - Logs load order for debugging
         - Skip files: __init__.py, base.py, schema_renderer.py, *_legacy.py
+
+    Priority System:
+        Plugins are sorted by priority value (default: PRIORITY_MEDIUM = 50).
+        Use priority constants: PRIORITY_CRITICAL (10), PRIORITY_HIGH (25),
+        PRIORITY_MEDIUM (50), PRIORITY_LOW (75) in plugin metadata.
+
+    Example:
+        Plugin metadata with high priority:
+        metadata = {
+            "priority": PRIORITY_HIGH,  # Load before default plugins
+            "version": "1.0.0",
+            ...
+        }
     """
 
     def __init__(self):
@@ -111,7 +154,7 @@ class PluginManager:
             sorted(
                 self._plugins.items(),
                 key=lambda x: (
-                    x[1].metadata.get("priority", 50),  # Default priority: 50
+                    x[1].metadata.get("priority", PRIORITY_MEDIUM),  # Default: PRIORITY_MEDIUM (50)
                     x[0],  # Fallback: sort by ID
                 ),
             )
@@ -119,10 +162,40 @@ class PluginManager:
 
         logger.info(f"Plugin discovery complete: {len(self._plugins)} plugins loaded")
 
+        # Log plugin load order with priorities for debugging
+        logger.info("Plugin load order (by priority):")
+        for plugin_id, plugin in self._plugins.items():
+            priority = plugin.metadata.get("priority", PRIORITY_MEDIUM)
+            priority_label = self._get_priority_label(priority)
+            logger.info(f"  [{priority:3d}] {priority_label:8s} - {plugin.name} (id={plugin_id})")
+
         if self.load_errors:
             logger.warning(f"Plugin load errors: {len(self.load_errors)}")
             for file, cls, error in self.load_errors:
                 logger.warning(f"  - {file}.{cls or '?'}: {error}")
+
+    def _get_priority_label(self, priority: int) -> str:
+        """
+        Convert priority number to human-readable label.
+
+        Args:
+            priority: Priority value (0-100)
+
+        Returns:
+            Priority label (CRITICAL, HIGH, MEDIUM, LOW, or CUSTOM)
+        """
+        if priority < 25:
+            return "CRITICAL"
+        elif priority < 50:
+            return "HIGH"
+        elif priority == 50:
+            return "MEDIUM"
+        elif priority < 75:
+            return "MEDIUM-"
+        elif priority <= 100:
+            return "LOW"
+        else:
+            return "CUSTOM"
 
     def get_plugin(self, plugin_id: str) -> ImageHostPlugin:
         """
