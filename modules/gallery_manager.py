@@ -88,23 +88,19 @@ class GalleryManager(ctk.CTkToplevel):
         threading.Thread(target=_task, daemon=True).start()
 
     def _load_more_pages(self):
-        """Fetches the next page and appends it"""
+        """Fetches the next page and replaces current galleries"""
         self.current_page += 1
 
-        # Remove the "Load More" button temporarily so we can append items
-        if self.btn_load_more:
-            self.btn_load_more.destroy()
-            self.btn_load_more = None
+        # Clear UI
+        for widget in self.scroll.winfo_children():
+            widget.destroy()
 
         service = self.service_var.get()
-        loading_lbl = ctk.CTkLabel(self.scroll, text=f"Loading Page {self.current_page}...")
-        loading_lbl.pack(pady=10)
+        ctk.CTkLabel(self.scroll, text=f"Loading Page {self.current_page}...").pack(pady=20)
 
         def _task():
             data = self._fetch_galleries(service, page=self.current_page)
-            # Safe destroy check for the loading label
-            self.after(0, lambda: loading_lbl.destroy() if loading_lbl.winfo_exists() else None)
-            self.after(0, lambda: self._render_list(data, append=True))
+            self.after(0, lambda: self._render_list(data, append=False))
 
         threading.Thread(target=_task, daemon=True).start()
 
@@ -276,8 +272,8 @@ class GalleryManager(ctk.CTkToplevel):
             return []
 
         try:
-            # Append page parameter
-            url = f"https://imx.to/user/galleries?page={page}"
+            # Append page parameter with 200 galleries per page
+            url = f"https://imx.to/user/galleries?page={page}&limit=200"
             r = session.get(url, timeout=15)
 
             galleries = []
