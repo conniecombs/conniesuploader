@@ -21,6 +21,7 @@ Critical bug fix release addressing IMX gallery creation issues with the "One Ga
 - 🐛 **Critical Bug Fix** - Fixed IMX gallery creation to properly respect auto_gallery setting
 - ✅ **Gallery Per Batch** - Each folder now correctly creates its own gallery when enabled
 - 🔄 **Plugin Consistency** - IMX behavior now matches Pixhost implementation
+- 🛡️ **Antivirus Fix** - CI builds no longer trigger false positives (aligned with release builds)
 
 ## ✨ Recent Improvements
 
@@ -28,6 +29,7 @@ Critical bug fix release addressing IMX gallery creation issues with the "One Ga
 - 🐛 **Critical Gallery Bug Fix** - IMX plugin now correctly creates individual galleries per batch when "One Gallery Per Folder" is enabled
 - ✅ **Auto-Gallery Respect** - Fixed logic to prioritize auto_gallery setting over manual gallery ID
 - 🔄 **Plugin Consistency** - IMX behavior now matches Pixhost plugin implementation
+- 🛡️ **CI/CD Antivirus Fix** - Resolved false positives by aligning CI build with release build (changed `--add-data` to `--add-binary`)
 
 **v1.2.0 Release - "Stability & Maintenance" (Jan 17, 2026):**
 - 📦 **Version Updates** - All version strings updated to 1.2.0
@@ -127,7 +129,7 @@ Critical bug fix release addressing IMX gallery creation issues with the "One Ga
 
 **Download the latest release for your platform:**
 
-👉 **[Download v1.2.0](https://github.com/conniecombs/conniesuploader/releases/tag/v1.2.0)**
+👉 **[Download v1.2.1](https://github.com/conniecombs/conniesuploader/releases/tag/v1.2.1)**
 
 Available builds:
 - **Windows**: `ConniesUploader-windows.zip` (includes `.exe` + SHA256 checksum)
@@ -666,7 +668,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Version History
 
-**Latest Release: v1.2.0 - "Stability & Maintenance"** (Jan 17, 2026)
+**Latest Release: v1.2.1 - "Gallery Fix"** (Jan 18, 2026)
+
+**v1.2.1 - "Gallery Fix"** (Jan 18, 2026):
+- 🐛 **Critical Gallery Bug Fix** - IMX plugin correctly creates individual galleries per batch
+- ✅ **Auto-Gallery Respect** - Fixed logic to prioritize auto_gallery setting over manual ID
+- 🔄 **Plugin Consistency** - IMX behavior now matches Pixhost implementation
+- 🛡️ **CI/CD Antivirus Fix** - Resolved false positives by aligning CI build with release build
 
 **v1.2.0 - "Stability & Maintenance"** (Jan 17, 2026):
 - 📦 Version updates across all files

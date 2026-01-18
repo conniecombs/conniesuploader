@@ -44,6 +44,33 @@ Fixed a critical bug in the IMX plugin where the "One Gallery Per Folder" featur
 
 ---
 
+**CI/CD Antivirus False Positive Fix**
+
+Resolved antivirus false positives in CI-built executables by aligning the CI build configuration with the release build process.
+
+#### **Issue Details**
+- **Problem**: CI/CD-built executables triggered antivirus scanners, while release ZIP executables did not
+- **Root Cause**: CI build used `--add-data "uploader.exe;."` instead of `--add-binary "uploader.exe;."` to bundle the Go sidecar
+- **Impact**: When bundled as data, the Go sidecar loses executable metadata and triggers heuristic-based malware detection
+
+#### **Fix Implementation**
+- Changed PyInstaller flag from `--add-data` to `--add-binary` for the Go sidecar
+- Added explicit plugin imports (`--collect-submodules modules.plugins`, `--hidden-import` for each plugin)
+- Ensured CI and release builds produce identical executable structure
+
+#### **Technical Details**
+| Flag | Treatment | Executable Metadata | Antivirus Impact |
+|------|-----------|---------------------|------------------|
+| `--add-data` | Resource file | ❌ No executable attributes | 🚨 Triggers heuristics |
+| `--add-binary` | Binary executable | ✅ Proper executable markers | ✅ Passes scans |
+
+#### **Files Changed**
+- `.github/workflows/ci.yml`: Updated PyInstaller configuration (lines 148-164)
+
+**Commit**: `044bd3d` - fix: Resolve CI build antivirus false positives by aligning with release build
+
+---
+
 ## [1.2.0] - 2026-01-17
 
 ### 📦 Release Preparation
